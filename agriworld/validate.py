@@ -10,6 +10,16 @@ import agriworld.config as config
 from agriworld.units import CORN_T_HA_TO_BU_AC
 
 
+def _spatial_ids(batch, device):
+    state_id = batch.get("state_id", None)
+    county_id = batch.get("county_id", None)
+    if state_id is not None:
+        state_id = state_id.to(device)
+    if county_id is not None:
+        county_id = county_id.to(device)
+    return state_id, county_id
+
+
 @torch.no_grad()
 def validate_physics(model, dataloader, device, n_show=5):
     model.eval()
@@ -25,8 +35,9 @@ def validate_physics(model, dataloader, device, n_show=5):
         year_b = batch.get("year", None)
         if year_b is not None:
             year_b = year_b.to(device)
+        state_id, county_id = _spatial_ids(batch, device)
 
-        model.set_static_features(static_f)
+        model.set_static_features(static_f, state_id=state_id, county_id=county_id)
         traj, pred_yield = model(forcing, n_init, year=year_b)
 
         lai    = traj[0, :, 0].cpu().numpy()
@@ -159,8 +170,9 @@ def validate_yield_all(model, dataloader, device):
         year_b = batch.get("year", None)
         if year_b is not None:
             year_b = year_b.to(device)
+        state_id, county_id = _spatial_ids(batch, device)
 
-        model.set_static_features(static_f)
+        model.set_static_features(static_f, state_id=state_id, county_id=county_id)
         _, pred = model(forcing, n_init, year=year_b)
         preds.append(pred.detach().cpu())
         tgts.append(target.detach().cpu())
@@ -238,8 +250,9 @@ def validate_physics(model, dataloader, device, n_show=5):
         year_b = batch.get("year", None)
         if year_b is not None:
             year_b = year_b.to(device)
+        state_id, county_id = _spatial_ids(batch, device)
 
-        model.set_static_features(static_f)
+        model.set_static_features(static_f, state_id=state_id, county_id=county_id)
         traj, pred_yield = model(forcing, n_init, year=year_b)
 
         fc, wp, dr = model.ode_func.water_expert.get_soil_params()
@@ -443,8 +456,9 @@ def validate_smap(model, dataloader, device):
         year_b = batch.get("year", None)
         if year_b is not None:
             year_b = year_b.to(device)
+        state_id, county_id = _spatial_ids(batch, device)
 
-        model.set_static_features(static_f)
+        model.set_static_features(static_f, state_id=state_id, county_id=county_id)
         traj, _ = model(forcing, n_init, year=year_b)
 
         sw = traj[:, :, 3]  # [B, T]

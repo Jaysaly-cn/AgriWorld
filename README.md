@@ -1,15 +1,15 @@
 # AgriWorld
 
-AgriWorld is a physics-guided differentiable agricultural world model for county-level crop systems. The current development mainline is `agriworld-v3.27`.
+AgriWorld is a physics-guided differentiable agricultural world model for county-level crop systems. The current development mainline is `agriworld-v3.28`.
 
-V3.27 regularizes structured county-level crop adaptation and exports interpretable county factors for paper-ready analysis.
+V3.28 makes structured county-level crop adaptation bias-free, so learned factors must come from static features rather than a global output bias.
 
 ## Current Status
 
 | Item | Status |
 |---|---|
-| Current schema | `agriworld-v3.27` |
-| Stable baseline | `agriworld-v3.26` |
+| Current schema | `agriworld-v3.28` |
+| Stable baseline | `agriworld-v3.27` |
 | Dataset | 2019-2023 merged data |
 | Active crop subset | 867 corn county-year samples |
 | Split | train 2019-2022, validate 2023 |
@@ -72,12 +72,13 @@ python merge_years.py
 python audit_data.py
 ```
 
-## V3.27 Additions
+## V3.28 Additions
 
 - Yield residual head is disabled by default and retained as an ablation option.
 - Static-conditioned interaction gates for water, nitrogen, VPD and heat responses.
 - Structured county-level crop parameters from static features: HI factor, yield-scale factor and heat sensitivity.
 - Static adaptation regularization to keep county-level factors interpretable and reduce memorization.
+- Bias-free static crop adapter output to prevent county adaptation from collapsing into global offsets.
 - Reproductive-stage heat exposure penalty on harvest index.
 - Evaluation exports county-level HI factor, yield factor, heat sensitivity and reproductive heat factor for AAAI-ready interpretability figures.
 - Stricter factor-response PASS criteria.
@@ -92,37 +93,13 @@ python audit_data.py
 |---|---|
 | `docs/MODEL_V3.md` | Model specification |
 | `docs/data_instrument.md` | Data pipeline and tensor contract |
-| `docs/ABLATION.md` | V3.27 ablation strategy |
+| `docs/ABLATION.md` | V3.28 ablation strategy |
 | `docs/VISUALIZATION_TODO.md` | AAAI visualization plan and data exports |
 | `docs/报告.md` | Progress report for advisor updates |
 
 ## Next Work
 
-1. Train V3.27 baseline and compare against V3.26.
-2. Run the reduced V3.27 ablation matrix.
+1. Train V3.28 baseline and compare against V3.27.
+2. Run the reduced V3.28 ablation matrix.
 3. Inspect R2/ranking improvement, not only RMSE.
 4. Use the new exported tables to generate AAAI-ready visualizations.
-
-## License
-
-MIT License
-
-Copyright (c) 2025 AgriWorld Contributors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.

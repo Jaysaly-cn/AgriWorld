@@ -15,6 +15,8 @@ AgriWorld 鈥?妯″瀷鍩虹嚎璇勪及
 """
 
 import os, sys, argparse, csv, json
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -27,6 +29,7 @@ from agriworld.simulator import AgriWorldSimulator
 from agriworld.validate import validate_physics, validate_smap, validate_yield_all
 from agriworld.units import CORN_T_HA_TO_BU_AC
 from agriworld.splits import split_dataset
+from agriworld.window_stress import WINDOW_NAMES, FACTOR_NAMES
 from scripts.factor_response import audit_factor_responses
 
 
@@ -93,23 +96,112 @@ def _county_adaptation_summary(model, forcing):
     return values
 
 
+def _window_stress_row(model):
+    values = {
+        "window_stress_factor": 1.0,
+        "dominant_stress_window": "",
+        "dominant_stress_factor": "",
+    }
+    for name in WINDOW_NAMES:
+        values[f"stress_{name}"] = 0.0
+    summary = getattr(model, "last_window_stress", None)
+    if not summary:
+        return values
+    factor = summary["factor"].detach().reshape(-1)[0].item()
+    window_stress = summary["window_stress"].detach()[0]
+    contributions = summary["contributions"].detach()[0]
+    flat_index = int(torch.argmax(contributions).item())
+    window_idx = flat_index // len(FACTOR_NAMES)
+    factor_idx = flat_index % len(FACTOR_NAMES)
+    values["window_stress_factor"] = float(factor)
+    values["dominant_stress_window"] = WINDOW_NAMES[window_idx]
+    values["dominant_stress_factor"] = FACTOR_NAMES[factor_idx]
+    for idx, name in enumerate(WINDOW_NAMES):
+        values[f"stress_{name}"] = float(window_stress[idx].item())
+    return values
+
+
+def _group_residuals(sample_rows, group_key):
+    groups = {}
+    for row in sample_rows:
+        key = str(row.get(group_key, ""))
+        groups.setdefault(key, []).append(row)
+    summaries = []
+    for key, rows in groups.items():
+        pred = np.array([float(row["pred_bu_ac"]) for row in rows])
+        target = np.array([float(row["target_bu_ac"]) for row in rows])
+        residual = pred - target
+        rmse = float(np.sqrt(np.mean(residual ** 2)))
+        mae = float(np.mean(np.abs(residual)))
+        target_mean = float(np.mean(target))
+        summaries.append({
+            group_key: key,
+            "n": len(rows),
+            "target_mean_bu_ac": target_mean,
+            "pred_mean_bu_ac": float(np.mean(pred)),
+            "bias_bu_ac": float(np.mean(residual)),
+            "mae_bu_ac": mae,
+            "rmse_bu_ac": rmse,
+            "nrmse_pct": float(rmse / max(target_mean, 1e-6) * 100.0),
+            "abs_bias_bu_ac": float(abs(np.mean(residual))),
+        })
+    return sorted(
+        summaries,
+        key=lambda row: (row["rmse_bu_ac"], row["abs_bias_bu_ac"]),
+        reverse=True,
+    )
+
+
+def _spatial_residual_summary(sample_rows):
+    by_state = _group_residuals(sample_rows, "state")
+    by_county = _group_residuals(sample_rows, "county")
+    state_rmse = np.array([row["rmse_bu_ac"] for row in by_state], dtype=float)
+    state_bias = np.array([row["bias_bu_ac"] for row in by_state], dtype=float)
+    county_rmse = np.array([row["rmse_bu_ac"] for row in by_county], dtype=float)
+    county_bias = np.array([row["bias_bu_ac"] for row in by_county], dtype=float)
+    return {
+        "by_state": by_state,
+        "by_county": by_county,
+        "macro_state_rmse_bu_ac": float(np.mean(state_rmse)) if state_rmse.size else float("nan"),
+        "macro_county_rmse_bu_ac": float(np.mean(county_rmse)) if county_rmse.size else float("nan"),
+        "state_bias_std_bu_ac": float(np.std(state_bias)) if state_bias.size else float("nan"),
+        "county_bias_std_bu_ac": float(np.std(county_bias)) if county_bias.size else float("nan"),
+        "state_bias_range_bu_ac": float(np.max(state_bias) - np.min(state_bias)) if state_bias.size else float("nan"),
+        "worst_states_by_rmse": by_state[:5],
+        "worst_counties_by_abs_bias": sorted(
+            by_county,
+            key=lambda row: row["abs_bias_bu_ac"],
+            reverse=True,
+        )[:20],
+    }
+
+
+def _write_rows_csv(path, rows):
+    if not rows:
+        return
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 # 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?#  鏍稿績璇勪及鍑芥暟
 # 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 @torch.no_grad()
-def evaluate(ckpt_path, data_path, device):
-    print(f"=" * 72)
-    print(f"  AgriWorld 妯″瀷鍩虹嚎璇勪及")
-    print(f"  checkpoint: {ckpt_path}")
-    print(f"  data:       {data_path}")
-    print(f"  device:     {device}")
-    print(f"=" * 72)
+def evaluate(ckpt_path, data_path, device, save_legacy=True):
+    verbose = bool(getattr(C, "VERBOSE", False))
+    print(f"Evaluate | schema={getattr(C, 'MODEL_SCHEMA', 'unknown')} | device={device}")
+    if verbose:
+        print(f"  checkpoint: {ckpt_path}")
+        print(f"  data:       {data_path}")
 
     # 鈹€鈹€ 1. 鍔犺浇妯″瀷 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     model = AgriWorldSimulator().to(device)
     state = torch.load(ckpt_path, map_location=device, weights_only=False)
     epoch_info, best_val = _load_model_state(model, state)
     model.eval()
-    print(f"\n  Model loaded | epoch={epoch_info} | best_val={best_val}")
+    if verbose:
+        print(f"  Model loaded | epoch={epoch_info} | best_val={best_val}")
 
     # 鈹€鈹€ 2. 鍔犺浇鏁版嵁 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     ds = AgriTensorDataset(data_path)
@@ -124,13 +216,7 @@ def evaluate(ckpt_path, data_path, device):
     crop_types = [int(ds[i]['static_features'][10].item()) for i in range(N)]
     corn = sum(1 for c in crop_types if c == 1)
     soy  = sum(1 for c in crop_types if c == 5)
-    print(f"\n  鏁版嵁闆? {N} grids ({n_train} train / {n_val} val)")
-    print(f"  浣滅墿: 鐜夌背={corn}  澶ц眴={soy}  鍏朵粬={N-corn-soy}")
-
-    # 鈹€鈹€ 4. 浜ч噺绮惧害 (鎸変綔鐗╃被鍨嬪垎灞? 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    print(f"\n  {'鈹€'*60}")
-    print(f"  鈻?浜ч噺绮惧害 (楠岃瘉闆?")
-    print(f"  {'鈹€'*60}")
+    print(f"  Dataset: {N} samples ({n_train} train / {n_val} val) | corn={corn} soy={soy} other={N-corn-soy}")
 
     groups = {}  # {crop_label: {preds: [], tgts: []}}
 
@@ -138,9 +224,10 @@ def evaluate(ckpt_path, data_path, device):
     sample_rows = []
     trajectory_records = []
     max_trajectories = int(getattr(C, "EVAL_TRAJECTORY_SAMPLES", 24))
+    progress_every = int(getattr(C, "EVAL_PROGRESS_EVERY", 0))
     for i in range(n_val):
-        if i % 10 == 0 or i == n_val - 1:
-            print(f"     鎺ㄧ悊杩涘害: {i+1}/{n_val}", flush=True)
+        if progress_every > 0 and (i % progress_every == 0 or i == n_val - 1):
+            print(f"  Inference: {i+1}/{n_val}", flush=True)
 
         idx = vds.indices[i]
         sample = ds[idx]
@@ -154,8 +241,14 @@ def evaluate(ckpt_path, data_path, device):
         forcing  = sample['forcing'].unsqueeze(0).to(device)
         n_init   = sample['n_init'].unsqueeze(0).to(device)
         year = torch.tensor([sample['year']], device=device)
+        state_id = sample.get("state_id", None)
+        county_id = sample.get("county_id", None)
+        if state_id is not None:
+            state_id = state_id.to(device)
+        if county_id is not None:
+            county_id = county_id.to(device)
 
-        model.set_static_features(static_f)
+        model.set_static_features(static_f, state_id=state_id, county_id=county_id)
         traj, pred = model(forcing, n_init, year=year)
 
         tgt_raw = sample['target_yield'].item() * CORN_T_HA_TO_BU_AC
@@ -168,6 +261,7 @@ def evaluate(ckpt_path, data_path, device):
         peak_lai_obs = float(obs_vals.max().item()) if obs_vals.numel() else float("nan")
         stress = _stress_summary(model, traj, forcing)
         county_adapt = _county_adaptation_summary(model, forcing)
+        window_stress = _window_stress_row(model)
 
         groups[label]['preds'].append(pred_raw)
         groups[label]['tgts'].append(tgt_raw)
@@ -176,6 +270,8 @@ def evaluate(ckpt_path, data_path, device):
             "year": sample.get("year", ""),
             "state": sample.get("state", ""),
             "county": sample.get("county", ""),
+            "state_id": int(sample.get("state_id", torch.tensor([-1]))[0].item()),
+            "county_id": int(sample.get("county_id", torch.tensor([-1]))[0].item()),
             "crop": label,
             "target_t_ha": target_t_ha,
             "pred_t_ha": pred_t_ha,
@@ -188,6 +284,7 @@ def evaluate(ckpt_path, data_path, device):
             "final_biomass": traj[:, -1, 1].item(),
             **stress,
             **county_adapt,
+            **window_stress,
         })
         if (
             getattr(C, "SAVE_EVAL_TRAJECTORIES", True) and
@@ -205,6 +302,7 @@ def evaluate(ckpt_path, data_path, device):
                 "pred_t_ha": pred_t_ha,
                 "target_t_ha": target_t_ha,
                 **county_adapt,
+                **window_stress,
             })
 
     # 缁熻
@@ -215,9 +313,10 @@ def evaluate(ckpt_path, data_path, device):
         mape = np.mean(np.abs((p - t) / (t + 1e-3))) * 100
         rmse = np.sqrt(np.mean((p - t) ** 2))
         r2 = 1 - np.sum((p - t)**2) / max(np.sum((t - t.mean())**2), 1e-10) if len(t) > 1 else 0
-        print(f"  {label:10s}  n={len(p):3d}  "
-              f"pred={np.mean(p):6.1f}  tgt={np.mean(t):6.1f}  "
-              f"RMSE={rmse:5.1f}  MAPE={mape:5.1f}%  R虏={r2:.3f}")
+        if verbose:
+            print(f"  {label:10s}  n={len(p):3d}  "
+                  f"pred={np.mean(p):6.1f}  tgt={np.mean(t):6.1f}  "
+                  f"RMSE={rmse:5.1f}  MAPE={mape:5.1f}%  R2={r2:.3f}")
 
     # 鎬讳綋
     ap = np.array(all_preds); at = np.array(all_tgts)
@@ -237,40 +336,81 @@ def evaluate(ckpt_path, data_path, device):
             "min": float(np.min(vals)),
             "max": float(np.max(vals)),
         }
-    print(f"  {'鈹€'*60}")
-    print(f"  {'ALL':10s}  n={len(ap):3d}  "
-          f"pred={np.mean(ap):6.1f}  tgt={np.mean(at):6.1f}  "
-          f"RMSE={rmse_all:5.1f}  R虏={r2_all:.3f}")
+    window_summary = {}
+    if sample_rows:
+        vals = np.array([row["window_stress_factor"] for row in sample_rows], dtype=float)
+        window_summary["factor"] = {
+            "mean": float(np.mean(vals)),
+            "std": float(np.std(vals)),
+            "min": float(np.min(vals)),
+            "max": float(np.max(vals)),
+        }
+        for name in WINDOW_NAMES:
+            vals = np.array([row[f"stress_{name}"] for row in sample_rows], dtype=float)
+            window_summary[name] = {
+                "mean": float(np.mean(vals)),
+                "std": float(np.std(vals)),
+                "min": float(np.min(vals)),
+                "max": float(np.max(vals)),
+            }
+    spatial_residuals = _spatial_residual_summary(sample_rows)
+    print(
+        f"  Yield all: n={len(ap)} pred={np.mean(ap):.1f} tgt={np.mean(at):.1f} "
+        f"RMSE={rmse_all:.1f} bu/ac NRMSE={rmse_all/at.mean()*100:.1f}% R2={r2_all:.3f}"
+    )
+    for label, g in groups.items():
+        p, t = np.array(g['preds']), np.array(g['tgts'])
+        bias = np.mean(p - t)
+        rmse = np.sqrt(np.mean((p - t) ** 2))
+        print(f"  {label}: n={len(p)} RMSE={rmse:.1f} bu/ac bias={bias:+.1f} bu/ac")
+    if spatial_residuals["worst_states_by_rmse"]:
+        worst = spatial_residuals["worst_states_by_rmse"][0]
+        print(
+            "  Spatial residual: "
+            f"worst_state={worst['state']} "
+            f"RMSE={worst['rmse_bu_ac']:.1f} "
+            f"bias={worst['bias_bu_ac']:+.1f} bu/ac | "
+            f"macro_state_RMSE={spatial_residuals['macro_state_rmse_bu_ac']:.1f} "
+            f"state_bias_std={spatial_residuals['state_bias_std_bu_ac']:.1f}"
+        )
 
     # 鈹€鈹€ 5. 鐗╃悊涓€鑷存€?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    print(f"\n  {'鈹€'*60}")
-    print("  Physical consistency validation")
-    print(f"  {'鈹€'*60}")
-    validate_yield_all(model, vdl, device)
-    validate_physics(model, vdl, device, n_show=10)
+    if getattr(C, "EVAL_RUN_PHYSICS", False) or verbose:
+        print("\n  Physical consistency validation")
+        validate_yield_all(model, vdl, device)
+        validate_physics(model, vdl, device, n_show=10)
 
     # 鈹€鈹€ 6. SMAP 鎺㈤拡 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    print(f"\n  {'鈹€'*60}")
-    print(f"  鈻?SMAP 鍦熷￥姘村垎鎺㈤拡")
-    print(f"  {'鈹€'*60}")
-    validate_smap(model, vdl, device)
+    if getattr(C, "EVAL_RUN_SMAP", False) or verbose:
+        print("\n  SMAP probe")
+        validate_smap(model, vdl, device)
 
     # 鈹€鈹€ 7. 鍥犲瓙鍝嶅簲瀹¤ 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    factor_results = audit_factor_responses(model, vdl, device, max_batches=3)
+    factor_results = audit_factor_responses(
+        model,
+        vdl,
+        device,
+        max_batches=3,
+        print_results=bool(getattr(C, "EVAL_PRINT_FACTOR_TABLE", False) or verbose),
+    )
+    factor_line = " ".join(
+        f"{name}={vals.get('mean_response_pct', float('nan')):+.1f}%"
+        for name, vals in factor_results.items()
+    )
+    print(f"  Factor response: {factor_line}")
 
     # 鈹€鈹€ 8. 鎵€鏈夊彲瀛︿範鍙傛暟 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    print(f"\n  {'鈹€'*60}")
-    print(f"  鈻?瀛︿範鍙傛暟璇婃柇")
-    print(f"  {'鈹€'*60}")
-    for name, param in model.named_parameters():
-        if param.numel() == 1:
-            print(f"  {name:50s} = {param.item():.4f}")
-        elif param.numel() < 30:
-            vals = param.detach().flatten().tolist()
-            print(f"  {name:50s} = [{', '.join(f'{v:.4f}' for v in vals)}]")
-        else:
-            print(f"  {name:50s}  shape={str(list(param.shape)):16s}  "
-                  f"mean={param.mean().item():.4f}  std={param.std().item():.4f}")
+    if getattr(C, "EVAL_PRINT_PARAMS", False) or verbose:
+        print("\n  Learnable parameters")
+        for name, param in model.named_parameters():
+            if param.numel() == 1:
+                print(f"  {name:50s} = {param.item():.4f}")
+            elif param.numel() < 30:
+                vals = param.detach().flatten().tolist()
+                print(f"  {name:50s} = [{', '.join(f'{v:.4f}' for v in vals)}]")
+            else:
+                print(f"  {name:50s}  shape={str(list(param.shape)):16s}  "
+                      f"mean={param.mean().item():.4f}  std={param.std().item():.4f}")
 
     # 鈹€鈹€ 9. 淇濆瓨姹囨€?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     summary = {
@@ -292,6 +432,8 @@ def evaluate(ckpt_path, data_path, device):
         },
         'factor_responses': factor_results,
         'county_adaptation': adaptation_summary,
+        'window_stress': window_summary,
+        'spatial_residuals': spatial_residuals,
         'params': {
             name: float(param.item())
             for name, param in model.named_parameters()
@@ -303,6 +445,8 @@ def evaluate(ckpt_path, data_path, device):
     named_save_path = os.path.join(RESULTS_DIR, f"eval_{ckpt_stem}.pt")
     named_json_path = os.path.join(RESULTS_DIR, f"eval_{ckpt_stem}.json")
     named_samples_path = os.path.join(RESULTS_DIR, f"eval_{ckpt_stem}_samples.csv")
+    named_state_path = os.path.join(RESULTS_DIR, f"eval_{ckpt_stem}_state_residuals.csv")
+    named_county_path = os.path.join(RESULTS_DIR, f"eval_{ckpt_stem}_county_residuals.csv")
     named_traj_path = os.path.join(RESULTS_DIR, f"eval_{ckpt_stem}_trajectories.pt")
     torch.save(summary, named_save_path)
     with open(named_json_path, "w", encoding="utf-8") as f:
@@ -312,33 +456,27 @@ def evaluate(ckpt_path, data_path, device):
             writer = csv.DictWriter(f, fieldnames=list(sample_rows[0].keys()))
             writer.writeheader()
             writer.writerows(sample_rows)
-        print(f"  Per-sample CSV saved to {named_samples_path}")
+        if verbose:
+            print(f"  Per-sample CSV saved to {named_samples_path}")
+        _write_rows_csv(named_state_path, spatial_residuals["by_state"])
+        _write_rows_csv(named_county_path, spatial_residuals["by_county"])
+        if verbose:
+            print(f"  State residual CSV saved to {named_state_path}")
+            print(f"  County residual CSV saved to {named_county_path}")
     if getattr(C, "SAVE_EVAL_TRAJECTORIES", True) and trajectory_records:
         torch.save(trajectory_records, named_traj_path)
-        print(f"  Trajectory sample saved to {named_traj_path}")
-    print(f"\n  Named summary saved to {named_save_path}")
-    print(f"  Named JSON saved to {named_json_path}")
-    save_path = os.path.join(RESULTS_DIR, "eval_baseline.pt")
-    torch.save(summary, save_path)
-    json_path = os.path.join(RESULTS_DIR, "eval_baseline.json")
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
-    print(f"\n  鉁?璇勪及缁撴灉宸蹭繚瀛樿嚦 {save_path}")
-    print(f"  JSON summary saved to {json_path}")
-
-    # 鎵撳嵃鍏抽敭璇婃柇缁撹
-    print(f"\n  {'='*60}")
-    print(f"  鈻?璇婃柇鎽樿")
-    print(f"  {'='*60}")
-    print(f"  浜ч噺绮惧害:  RMSE={rmse_all:.1f} bu/acre  NRMSE={rmse_all/at.mean()*100:.1f}%")
-    for label, g in groups.items():
-        p, t = np.array(g['preds']), np.array(g['tgts'])
-        bias = np.mean(p - t)
-        print(
-            f"  {label}:  bias={bias:+.1f} bu/acre "
-            f"({bias / CORN_T_HA_TO_BU_AC:+.2f} t/ha)  "
-            f"(pred={np.mean(p):.0f} vs tgt={np.mean(t):.0f})"
-        )
+        if verbose:
+            print(f"  Trajectory sample saved to {named_traj_path}")
+    print(f"  Saved: {named_save_path}")
+    print(f"  Saved: {named_json_path}")
+    if save_legacy:
+        save_path = os.path.join(RESULTS_DIR, "eval_baseline.pt")
+        torch.save(summary, save_path)
+        json_path = os.path.join(RESULTS_DIR, "eval_baseline.json")
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
+        print(f"  Saved: {save_path}")
+        print(f"  Saved: {json_path}")
 
     # D0 璇婃柇
     for name, param in model.named_parameters():

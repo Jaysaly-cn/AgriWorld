@@ -45,6 +45,53 @@ def compute_yield_loss(pred_yield, tgt_yield):
     return loss, lp, lt
 
 
+def compute_spatial_contrast_loss(
+    pred_yield,
+    tgt_yield,
+    county_id=None,
+    min_gap=0.15,
+):
+    """Pairwise county contrast in log-yield space."""
+    if pred_yield.numel() < 2:
+        return pred_yield.new_tensor(0.0)
+    lp = torch.log(pred_yield.clamp(min=1e-6)).view(-1)
+    lt = torch.log(tgt_yield.clamp(min=1e-6)).view(-1)
+    pred_diff = lp[:, None] - lp[None, :]
+    target_diff = lt[:, None] - lt[None, :]
+    mask = torch.triu(torch.ones_like(pred_diff, dtype=torch.bool), diagonal=1)
+    if county_id is not None:
+        cid = county_id.view(-1)
+        mask = mask & (cid[:, None] != cid[None, :])
+    if min_gap > 0:
+        mask = mask & ((tgt_yield.view(-1, 1) - tgt_yield.view(1, -1)).abs() >= min_gap)
+    if not mask.any():
+        return pred_yield.new_tensor(0.0)
+    return F.smooth_l1_loss(
+        pred_diff[mask],
+        target_diff[mask],
+        beta=0.25,
+    )
+
+
+def compute_group_bias_loss(pred_yield, tgt_yield, group_id=None, min_count=4):
+    """Penalize systematic regional mean bias in log-yield space."""
+    if group_id is None or pred_yield.numel() < min_count:
+        return pred_yield.new_tensor(0.0)
+    residual = (
+        torch.log(pred_yield.clamp(min=1e-6)).view(-1) -
+        torch.log(tgt_yield.clamp(min=1e-6)).view(-1)
+    )
+    group = group_id.view(-1)
+    terms = []
+    for gid in torch.unique(group):
+        mask = group == gid
+        if int(mask.sum().item()) >= int(min_count):
+            terms.append(residual[mask].mean().square())
+    if not terms:
+        return pred_yield.new_tensor(0.0)
+    return torch.stack(terms).mean()
+
+
 def compute_canopy_yield_consistency_loss(
     traj, tgt_yield, obs_lai=None, mask_lai=None
 ):
@@ -176,6 +223,16 @@ def compute_static_adaptation_regularization(model):
     )
 
 
+def compute_window_stress_regularization(model):
+    """Keep crop-window stress visible but not a hidden yield offset."""
+    summary = getattr(model, "last_window_stress", None)
+    if not summary:
+        return torch.tensor(0.0, device=model.harvest_index.device)
+    factor = summary["factor"]
+    sensitivity = summary["sensitivity"]
+    return (1.0 - factor).square().mean() + 0.02 * sensitivity.square().mean()
+
+
 @torch.no_grad()
 def calibrate_scale(model, dataloader, device):
     model.eval()
@@ -186,7 +243,13 @@ def calibrate_scale(model, dataloader, device):
         static_f = batch["static_features"].to(device)
         tgt = batch["target_yield"].to(device).squeeze(-1)
 
-        model.set_static_features(static_f)
+        state_id = batch.get("state_id", None)
+        county_id = batch.get("county_id", None)
+        if state_id is not None:
+            state_id = state_id.to(device)
+        if county_id is not None:
+            county_id = county_id.to(device)
+        model.set_static_features(static_f, state_id=state_id, county_id=county_id)
         year_b = batch.get("year", None)
         if year_b is not None: year_b = year_b.to(device)
         traj, _ = model(forcing, n_init, year=year_b)

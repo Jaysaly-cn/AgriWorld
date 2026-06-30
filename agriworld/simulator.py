@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from torchdiffeq import odeint
 from agriworld.ode import CompositeODE
+from agriworld.window_stress import CornWindowStressExpert
 import agriworld.config as config
 
 
@@ -49,26 +50,74 @@ class YieldResidualHead(nn.Module):
 class StaticCropParameterHead(nn.Module):
     """Structured county-level crop parameter adjustments from static features."""
 
-    def __init__(self, static_dim=11, hidden=16):
+    def __init__(
+        self,
+        static_dim=11,
+        hidden=24,
+        state_embed_dim=4,
+        county_embed_dim=8,
+    ):
         super().__init__()
-        self.static_norm = nn.LayerNorm(static_dim)
-        self.net = nn.Sequential(
-            nn.Linear(static_dim, hidden),
-            nn.SiLU(),
-            nn.Linear(hidden, 3),
+        self.input_dim = static_dim - 1  # drop crop_type; current training data is all corn
+        self.state_embed = nn.Embedding(
+            int(getattr(config, "STATE_EMBED_BUCKETS", 32)),
+            state_embed_dim,
         )
-        nn.init.zeros_(self.net[-1].weight)
-        nn.init.zeros_(self.net[-1].bias)
+        self.county_embed = nn.Embedding(
+            int(getattr(config, "COUNTY_EMBED_BUCKETS", 4096)),
+            county_embed_dim,
+        )
+        total_dim = self.input_dim + state_embed_dim + county_embed_dim
+        self.static_norm = nn.LayerNorm(self.input_dim)
+        self.context_norm = nn.LayerNorm(total_dim)
+        self.net = nn.Sequential(
+            nn.Linear(total_dim, hidden, bias=False),
+            nn.SiLU(),
+            nn.Linear(hidden, 3, bias=False),
+        )
+        nn.init.normal_(self.state_embed.weight, mean=0.0, std=0.08)
+        nn.init.normal_(self.county_embed.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.net[-1].weight, mean=0.0, std=0.02)
 
     def forward(
         self,
         static_features,
+        state_id=None,
+        county_id=None,
         hi_max_log=0.10,
         yield_max_log=0.08,
         heat_sens_max=0.50,
     ):
         x = torch.nan_to_num(static_features.float(), nan=0.0)
-        raw = torch.tanh(self.net(self.static_norm(x)))
+        x = x[..., :self.input_dim]
+        batch = x.shape[0]
+        dev = x.device
+        if state_id is None:
+            state_id = torch.zeros(batch, 1, dtype=torch.long, device=dev)
+        if county_id is None:
+            county_id = torch.zeros(batch, 1, dtype=torch.long, device=dev)
+        state_id = state_id.reshape(batch).to(device=dev, dtype=torch.long)
+        county_id = county_id.reshape(batch).to(device=dev, dtype=torch.long)
+        use_all_spatial = getattr(config, "USE_SPATIAL_EMBEDDINGS", False)
+        use_state = use_all_spatial or getattr(config, "USE_STATE_EMBEDDINGS", True)
+        use_county = use_all_spatial or getattr(config, "USE_COUNTY_EMBEDDINGS", False)
+        if use_state:
+            state_context = self.state_embed(state_id)
+        else:
+            state_context = torch.zeros(
+                batch, self.state_embed.embedding_dim, device=dev
+            )
+        if use_county:
+            county_context = self.county_embed(county_id)
+        else:
+            county_context = torch.zeros(
+                batch, self.county_embed.embedding_dim, device=dev
+            )
+        context = torch.cat(
+            [self.static_norm(x), state_context, county_context],
+            dim=-1,
+        )
+        raw = torch.tanh(self.net(self.context_norm(context)))
         hi_factor = torch.exp(float(hi_max_log) * raw[..., 0:1])
         yield_factor = torch.exp(float(yield_max_log) * raw[..., 1:2])
         heat_sensitivity = 1.0 + float(heat_sens_max) * raw[..., 2:3]
@@ -98,7 +147,11 @@ class AgriWorldSimulator(nn.Module):
         self.hi_width = nn.Parameter(torch.tensor(200.0))
         self.yield_residual = YieldResidualHead()
         self.static_crop_params = StaticCropParameterHead()
+        self.window_stress = CornWindowStressExpert()
+        self.last_window_stress = None
         self.current_static_features = None
+        self.current_state_id = None
+        self.current_county_id = None
 
     @property
     def harvest_index(self):
@@ -116,7 +169,13 @@ class AgriWorldSimulator(nn.Module):
     def gdd_flowering(self):
         return self.ode_func.pheno_expert.gdd_flowering
 
-    def set_static_features(self, static_features, latitude_deg=None):
+    def set_static_features(
+        self,
+        static_features,
+        latitude_deg=None,
+        state_id=None,
+        county_id=None,
+    ):
         """
         灏嗛潤鎬佺壒寰佸垎鍙戠粰鎵€鏈?Expert锛屽垵濮嬪寲缃戞牸鐗瑰紓鎬у弬鏁般€?
 
@@ -130,6 +189,8 @@ class AgriWorldSimulator(nn.Module):
         self.ode_func.rad_expert.set_static_features(static_features, latitude_deg)
         self.ode_func.current_static_features = static_features
         self.current_static_features = static_features
+        self.current_state_id = state_id
+        self.current_county_id = county_id
 
     def expert_params(self):
         params = (
@@ -173,6 +234,8 @@ class AgriWorldSimulator(nn.Module):
             params += list(self.yield_residual.parameters())
         if getattr(config, "USE_STATIC_CROP_PARAMS", True):
             params += list(self.static_crop_params.parameters())
+        if getattr(config, "USE_WINDOW_STRESS", True):
+            params += list(self.window_stress.parameters())
         return params
 
     @torch.no_grad()
@@ -194,10 +257,19 @@ class AgriWorldSimulator(nn.Module):
         p = (scale - 0.5) / 1.5
         self.log_yield_scale.fill_(torch.logit(torch.tensor(p)).item())
 
-    def static_crop_adjustments(self, static_features=None):
+    def static_crop_adjustments(
+        self,
+        static_features=None,
+        state_id=None,
+        county_id=None,
+    ):
         """Return interpretable county-level crop factors for logging/losses."""
         if static_features is None:
             static_features = self.current_static_features
+        if state_id is None:
+            state_id = self.current_state_id
+        if county_id is None:
+            county_id = self.current_county_id
         if (
             static_features is None or
             not getattr(config, "USE_STATIC_CROP_PARAMS", True)
@@ -205,6 +277,8 @@ class AgriWorldSimulator(nn.Module):
             return None
         return self.static_crop_params(
             static_features,
+            state_id=state_id,
+            county_id=county_id,
             hi_max_log=getattr(config, "STATIC_HI_MAX_LOG", 0.10),
             yield_max_log=getattr(config, "STATIC_YIELD_MAX_LOG", 0.08),
             heat_sens_max=getattr(config, "STATIC_HEAT_SENS_MAX", 0.50),
@@ -349,7 +423,15 @@ class AgriWorldSimulator(nn.Module):
                 dynamic,
                 max_log=getattr(config, "YIELD_RESIDUAL_MAX_LOG", 0.15),
             )
-        pred_yield = physical_yield * residual_factor
+        window_factor = 1.0
+        self.last_window_stress = None
+        if getattr(config, "USE_WINDOW_STRESS", True):
+            window_factor, self.last_window_stress = self.window_stress(
+                forcing,
+                traj,
+                self.ode_func,
+            )
+        pred_yield = physical_yield * residual_factor * window_factor
         return traj, pred_yield.squeeze(-1)
 
     def _reproductive_heat_factor(

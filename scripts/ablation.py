@@ -7,8 +7,11 @@ import os
 import shutil
 import sys
 import time
+from contextlib import redirect_stdout
+from inspect import signature
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
 
 from agriworld.log_utils import tee_stdout
 from agriworld.paths import MERGED_DATA_PATH, RESULTS_DIR, SAVE_DIR
@@ -16,10 +19,46 @@ from agriworld.paths import MERGED_DATA_PATH, RESULTS_DIR, SAVE_DIR
 
 VARIANTS = {
     "baseline": {
-        "desc": "V3.27 mainline: regularized static crop params + static interaction gates",
+        "desc": "V3.35 mainline: spatial contrast + state adaptation + corn window stress",
         "model_version": "phys_spatial",
         "use_lstm_residual": False,
         "overrides": {},
+    },
+    "no_window_stress": {
+        "desc": "Disable crop growth-window stress factor",
+        "model_version": "no_window_stress",
+        "use_lstm_residual": False,
+        "overrides": {"USE_WINDOW_STRESS": False},
+    },
+    "reproductive_only_window_stress": {
+        "desc": "Use only the reproductive crop-window stress factor",
+        "model_version": "reproductive_only_window_stress",
+        "use_lstm_residual": False,
+        "overrides": {"WINDOW_STRESS_ACTIVE_WINDOWS": "reproductive"},
+    },
+    "no_spatial_contrast": {
+        "desc": "Disable county pairwise yield contrast loss",
+        "model_version": "no_spatial_contrast",
+        "use_lstm_residual": False,
+        "overrides": {"USE_SPATIAL_CONTRAST": False},
+    },
+    "no_spatial_group_bias": {
+        "desc": "Disable state-level regional mean-bias loss",
+        "model_version": "no_spatial_group_bias",
+        "use_lstm_residual": False,
+        "overrides": {"USE_SPATIAL_GROUP_BIAS": False},
+    },
+    "no_state_embedding": {
+        "desc": "Disable state-level adaptation in static crop parameter head",
+        "model_version": "no_state_embedding",
+        "use_lstm_residual": False,
+        "overrides": {"USE_STATE_EMBEDDINGS": False},
+    },
+    "spatial_embedding_on": {
+        "desc": "Enable both state and county embeddings inside static crop parameter head",
+        "model_version": "spatial_embedding_on",
+        "use_lstm_residual": False,
+        "overrides": {"USE_SPATIAL_EMBEDDINGS": True},
     },
     "no_static_crop_params": {
         "desc": "Disable structured county-level crop parameter adjustments",
@@ -78,7 +117,14 @@ DEFAULT_OVERRIDES = {
     "USE_YIELD_RESIDUAL": False,
     "USE_STATIC_INTERACTION_GATES": True,
     "USE_STATIC_CROP_PARAMS": True,
+    "USE_SPATIAL_EMBEDDINGS": False,
+    "USE_STATE_EMBEDDINGS": True,
+    "USE_COUNTY_EMBEDDINGS": False,
+    "USE_SPATIAL_CONTRAST": True,
+    "USE_SPATIAL_GROUP_BIAS": True,
     "USE_REPRODUCTIVE_HEAT_PENALTY": True,
+    "USE_WINDOW_STRESS": True,
+    "WINDOW_STRESS_ACTIVE_WINDOWS": "all",
     "TEMPERATURE_STRESS_MODE": "heat",
     "TEMPERATURE_STRESS_FLOOR": 0.95,
     "TEMPERATURE_STRESS_STRENGTH": 0.20,
@@ -91,14 +137,28 @@ DEFAULT_OVERRIDES = {
     "W_CANOPY": 3.0,
     "YIELD_RESIDUAL_MAX_LOG": 0.20,
     "STATIC_INTERACTION_MAX": 0.10,
-    "STATIC_HI_MAX_LOG": 0.10,
-    "STATIC_YIELD_MAX_LOG": 0.08,
+    "STATIC_HI_MAX_LOG": 0.12,
+    "STATIC_YIELD_MAX_LOG": 0.10,
     "STATIC_HEAT_SENS_MAX": 0.50,
     "W_STATIC_ADAPT": 0.15,
+    "W_SPATIAL_GROUP_BIAS": 0.15,
+    "SPATIAL_GROUP_BIAS_MIN_COUNT": 4,
     "REPRO_HEAT_THRESHOLD_C": 30.0,
     "REPRO_HEAT_WIDTH_C": 2.0,
-    "REPRO_HEAT_MAX_HI_REDUCTION": 0.14,
+    "REPRO_HEAT_MAX_HI_REDUCTION": 0.20,
+    "WINDOW_STRESS_MAX_REDUCTION": 0.22,
+    "WINDOW_STRESS_HEAT_THRESHOLD_C": 30.0,
+    "WINDOW_STRESS_COLD_THRESHOLD_C": 8.0,
+    "WINDOW_STRESS_TEMP_WIDTH_C": 2.0,
+    "WINDOW_STRESS_PAR_REFERENCE": 20.0,
+    "W_WINDOW_STRESS": 0.08,
 }
+
+
+def _evaluate_variant(evaluate, ckpt, data_path, device):
+    if "save_legacy" in signature(evaluate).parameters:
+        return evaluate(ckpt, data_path, device, save_legacy=False)
+    return evaluate(ckpt, data_path, device)
 
 
 def run_variant(name: str, variant_config: dict, data_path: str, epochs: int):
@@ -122,7 +182,14 @@ def run_variant(name: str, variant_config: dict, data_path: str, epochs: int):
 
     from scripts.train import train
 
-    train()
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    train_log = os.path.join(RESULTS_DIR, f"ablation_{name}_train.log")
+    if getattr(C, "VERBOSE", False):
+        with tee_stdout(train_log):
+            train()
+    else:
+        with open(train_log, "w", encoding="utf-8") as f, redirect_stdout(f):
+            train()
 
     ver = variant_config["model_version"]
     ckpt = os.path.join(SAVE_DIR, f"agriworld_{ver}_best.pth")
@@ -132,6 +199,7 @@ def run_variant(name: str, variant_config: dict, data_path: str, epochs: int):
         "description": variant_config["desc"],
         "schema": getattr(C, "MODEL_SCHEMA", None),
         "model_version": variant_config["model_version"],
+        "train_log": train_log,
     }
 
     if not os.path.exists(ckpt):
@@ -146,11 +214,15 @@ def run_variant(name: str, variant_config: dict, data_path: str, epochs: int):
     import agriworld.config as C2
 
     eval_log = os.path.join(RESULTS_DIR, f"ablation_{name}_eval.log")
-    with tee_stdout(eval_log):
-        summary = evaluate(ckpt, data_path, C2.DEVICE)
-        print(f"\n  Text log saved to {eval_log}")
+    if getattr(C2, "VERBOSE", False) or getattr(C2, "ABLATION_EVALUATE_VERBOSE", False):
+        with tee_stdout(eval_log):
+            summary = _evaluate_variant(evaluate, ckpt, data_path, C2.DEVICE)
+            print(f"\n  Text log saved to {eval_log}")
+    else:
+        with open(eval_log, "w", encoding="utf-8") as f, redirect_stdout(f):
+            summary = _evaluate_variant(evaluate, ckpt, data_path, C2.DEVICE)
 
-    eval_pt = os.path.join(RESULTS_DIR, "eval_baseline.pt")
+    eval_pt = os.path.join(RESULTS_DIR, f"eval_agriworld_{ver}_best.pt")
     variant_pt = os.path.join(RESULTS_DIR, f"ablation_{name}_eval.pt")
     if os.path.exists(eval_pt):
         shutil.copyfile(eval_pt, variant_pt)
@@ -163,6 +235,14 @@ def run_variant(name: str, variant_config: dict, data_path: str, epochs: int):
         "yield_per_crop": summary.get("yield_per_crop", {}),
         "factor_responses": summary.get("factor_responses", {}),
     })
+    yield_all = result["yield_all"]
+    if yield_all:
+        print(
+            f"  Eval: RMSE={yield_all.get('rmse_bu_acre', yield_all.get('rmse', float('nan'))):.2f} "
+            f"bu/ac NRMSE={yield_all.get('nrmse_pct', float('nan')):.2f}% "
+            f"R2={yield_all.get('r2', float('nan')):.3f}"
+        )
+    print(f"  Logs: train={train_log} | eval={eval_log}")
     return result
 
 
@@ -228,6 +308,10 @@ def write_results_csv(results, csv_path):
         "nitrogen_pct",
         "temperature_pct",
         "heat_extreme_pct",
+        "window_heat_pct",
+        "window_vpd_pct",
+        "window_radiation_pct",
+        "window_water_pct",
         "time_sec",
     ]
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -257,6 +341,10 @@ def write_results_csv(results, csv_path):
                 "nitrogen",
                 "temperature",
                 "heat_extreme",
+                "window_heat",
+                "window_vpd",
+                "window_radiation",
+                "window_water",
             ]:
                 row[f"{name}_pct"] = (
                     factors.get(name, {}).get("mean_response_pct")

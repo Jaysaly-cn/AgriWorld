@@ -17,6 +17,7 @@ Static features (11 缁?: 瑙?data_index.txt
 
 import os
 import pickle
+import hashlib
 from collections import Counter, defaultdict
 import numpy as np
 import pandas as pd
@@ -48,6 +49,14 @@ DEFAULT_PLANTING_DOY = {
     "NE": 125,
     "MN": 130,
 }
+
+STATE_EMBED_BUCKETS = 32
+COUNTY_EMBED_BUCKETS = 4096
+
+
+def _stable_bucket(value, buckets):
+    digest = hashlib.blake2b(str(value).encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "little") % int(buckets)
 
 
 class AgriTensorDataset(Dataset):
@@ -188,6 +197,17 @@ class AgriTensorDataset(Dataset):
                 "state":           state,
                 "county":          (
                     f"{meta.get('state', '')}:{meta.get('county', sample_id)}"
+                ),
+                "state_id":        torch.tensor(
+                    [_stable_bucket(state, STATE_EMBED_BUCKETS)],
+                    dtype=torch.long,
+                ),
+                "county_id":       torch.tensor(
+                    [_stable_bucket(
+                        f"{meta.get('state', '')}:{meta.get('county', sample_id)}",
+                        COUNTY_EMBED_BUCKETS,
+                    )],
+                    dtype=torch.long,
                 ),
             })
 

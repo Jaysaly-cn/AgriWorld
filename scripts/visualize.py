@@ -50,10 +50,16 @@ def main():
     n_init   = sample['n_init'].unsqueeze(0).to(device)
     tgt = sample['target_yield'].item() * CORN_T_HA_TO_BU_AC
     year = torch.tensor([sample['year']], device=device)
+    state_id = sample.get("state_id", None)
+    county_id = sample.get("county_id", None)
+    if state_id is not None:
+        state_id = state_id.to(device)
+    if county_id is not None:
+        county_id = county_id.to(device)
 
     # 鈹€鈹€ 鎺ㄧ悊 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     with torch.no_grad():
-        model.set_static_features(static_f)
+        model.set_static_features(static_f, state_id=state_id, county_id=county_id)
         traj, pred = model(forcing, n_init, year=year)
     pred_yield = pred.item() * CORN_T_HA_TO_BU_AC
     traj = traj.cpu()
@@ -113,9 +119,15 @@ def main():
             n_init_b   = batch['n_init'].to(device)
             static_b   = batch['static_features'].to(device)
             year_b     = batch['year'].to(device)
+            state_b    = batch.get('state_id', None)
+            county_b   = batch.get('county_id', None)
+            if state_b is not None:
+                state_b = state_b.to(device)
+            if county_b is not None:
+                county_b = county_b.to(device)
             smap_b     = batch.get('val_smap_surface', None)
 
-            model.set_static_features(static_b)
+            model.set_static_features(static_b, state_id=state_b, county_id=county_b)
             traj_b, _ = model(forcing_b, n_init_b, year=year_b)
 
             sw = traj_b[:, :, 3].flatten().cpu().numpy()

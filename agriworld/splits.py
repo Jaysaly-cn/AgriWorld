@@ -25,7 +25,27 @@ def _split_indices_with_mode(samples, val_ratio=0.2, seed=42, mode="temporal"):
             if len(train_idx) >= min_train and len(val_idx) <= max_val:
                 return train_idx, val_idx, f"temporal(year={val_year})"
 
-    if mode in {"temporal", "auto", "spatial"}:
+    if mode in {"spatial_state"}:
+        groups = {}
+        for i, sample in enumerate(samples):
+            group = sample.get("state")
+            if group:
+                groups.setdefault(str(group), []).append(i)
+        if len(groups) > 1:
+            keys = sorted(groups)
+            random.Random(seed).shuffle(keys)
+            target = max(1, int(round(val_ratio * n)))
+            val_idx = []
+            for key in keys:
+                if len(val_idx) >= target:
+                    break
+                val_idx.extend(groups[key])
+            val_set = set(val_idx)
+            train_idx = [i for i in range(n) if i not in val_set]
+            if train_idx and val_idx:
+                return train_idx, val_idx, "spatial(state)"
+
+    if mode in {"temporal", "auto", "spatial", "spatial_county"}:
         groups = {}
         for i, sample in enumerate(samples):
             group = sample.get("county") or sample.get("state")

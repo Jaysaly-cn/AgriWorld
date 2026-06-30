@@ -3,7 +3,7 @@ import torch
 from agriworld.paths import MERGED_DATA_PATH, PRETRAINED_DIR, SAVE_DIR
 
 SEED = 42
-MODEL_SCHEMA = "agriworld-v3.27"
+MODEL_SCHEMA = "agriworld-v3.37"
 
 # 鈹€鈹€ 妯″瀷鐗堟湰 (娑堣瀺瀹為獙) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 # 'baseline': 鍘熷 CouplingHead (MLP anomaly)
@@ -24,12 +24,19 @@ USE_YIELD_RESIDUAL = bool(int(os.getenv("AGRI_USE_YIELD_RESIDUAL", "0")))
 USE_STATIC_INTERACTION_GATES = bool(int(os.getenv("AGRI_USE_STATIC_INTERACTION_GATES", "1")))
 USE_STATIC_CROP_PARAMS = bool(int(os.getenv("AGRI_USE_STATIC_CROP_PARAMS", "1")))
 USE_REPRODUCTIVE_HEAT_PENALTY = bool(int(os.getenv("AGRI_USE_REPRODUCTIVE_HEAT_PENALTY", "1")))
+USE_WINDOW_STRESS = bool(int(os.getenv("AGRI_USE_WINDOW_STRESS", "1")))
+WINDOW_STRESS_ACTIVE_WINDOWS = os.getenv("AGRI_WINDOW_STRESS_ACTIVE_WINDOWS", "all")
+USE_SPATIAL_EMBEDDINGS = bool(int(os.getenv("AGRI_USE_SPATIAL_EMBEDDINGS", "0")))
+USE_STATE_EMBEDDINGS = bool(int(os.getenv("AGRI_USE_STATE_EMBEDDINGS", "1")))
+USE_COUNTY_EMBEDDINGS = bool(int(os.getenv("AGRI_USE_COUNTY_EMBEDDINGS", "0")))
 YIELD_RESIDUAL_MAX_LOG = float(os.getenv("AGRI_YIELD_RESIDUAL_MAX_LOG", "0.20"))
 STATIC_INTERACTION_MAX = float(os.getenv("AGRI_STATIC_INTERACTION_MAX", "0.10"))
-STATIC_HI_MAX_LOG = float(os.getenv("AGRI_STATIC_HI_MAX_LOG", "0.10"))
-STATIC_YIELD_MAX_LOG = float(os.getenv("AGRI_STATIC_YIELD_MAX_LOG", "0.08"))
+STATIC_HI_MAX_LOG = float(os.getenv("AGRI_STATIC_HI_MAX_LOG", "0.12"))
+STATIC_YIELD_MAX_LOG = float(os.getenv("AGRI_STATIC_YIELD_MAX_LOG", "0.10"))
 STATIC_HEAT_SENS_MAX = float(os.getenv("AGRI_STATIC_HEAT_SENS_MAX", "0.50"))
 W_STATIC_ADAPT = float(os.getenv("AGRI_W_STATIC_ADAPT", "0.15"))
+STATE_EMBED_BUCKETS = int(os.getenv("AGRI_STATE_EMBED_BUCKETS", "32"))
+COUNTY_EMBED_BUCKETS = int(os.getenv("AGRI_COUNTY_EMBED_BUCKETS", "4096"))
 FACTOR_RESPONSE_EPS = float(os.getenv("AGRI_FACTOR_RESPONSE_EPS", "0.5"))
 HEAT_AUDIT_HOT_DAY_C = float(os.getenv("AGRI_HEAT_AUDIT_HOT_DAY_C", "28.0"))
 HEAT_AUDIT_DELTA_C = float(os.getenv("AGRI_HEAT_AUDIT_DELTA_C", "6.0"))
@@ -37,6 +44,19 @@ SAVE_TRAIN_HISTORY = bool(int(os.getenv("AGRI_SAVE_TRAIN_HISTORY", "1")))
 SAVE_EVAL_TABLES = bool(int(os.getenv("AGRI_SAVE_EVAL_TABLES", "1")))
 SAVE_EVAL_TRAJECTORIES = bool(int(os.getenv("AGRI_SAVE_EVAL_TRAJECTORIES", "1")))
 EVAL_TRAJECTORY_SAMPLES = int(os.getenv("AGRI_EVAL_TRAJECTORY_SAMPLES", "24"))
+
+# Console/log verbosity. Default compact mode keeps result artifacts intact but
+# avoids long per-sample diagnostics during routine train/evaluate/ablation.
+LOG_LEVEL = os.getenv("AGRI_LOG_LEVEL", "compact").lower()
+VERBOSE = LOG_LEVEL in {"verbose", "debug"}
+TRAIN_LOG_EVERY = int(os.getenv("AGRI_TRAIN_LOG_EVERY", "25"))
+TRAIN_FINAL_VALIDATE = bool(int(os.getenv("AGRI_TRAIN_FINAL_VALIDATE", "0")))
+EVAL_PROGRESS_EVERY = int(os.getenv("AGRI_EVAL_PROGRESS_EVERY", "0"))
+EVAL_RUN_PHYSICS = bool(int(os.getenv("AGRI_EVAL_RUN_PHYSICS", "0")))
+EVAL_RUN_SMAP = bool(int(os.getenv("AGRI_EVAL_RUN_SMAP", "0")))
+EVAL_PRINT_PARAMS = bool(int(os.getenv("AGRI_EVAL_PRINT_PARAMS", "0")))
+EVAL_PRINT_FACTOR_TABLE = bool(int(os.getenv("AGRI_EVAL_PRINT_FACTOR_TABLE", "0")))
+ABLATION_EVALUATE_VERBOSE = bool(int(os.getenv("AGRI_ABLATION_EVALUATE_VERBOSE", "0")))
 # The raw Wang-Engel temperature response is too strong as a direct
 # multiplicative stress term on this dataset. Default to an extreme-heat
 # penalty: ordinary temperature still drives phenology through GDD, while only
@@ -51,12 +71,17 @@ HEAT_STRESS_STAGE_CENTER = float(os.getenv("AGRI_HEAT_STRESS_STAGE_CENTER", "0.4
 HEAT_STRESS_STAGE_WIDTH = float(os.getenv("AGRI_HEAT_STRESS_STAGE_WIDTH", "0.15"))
 REPRO_HEAT_THRESHOLD_C = float(os.getenv("AGRI_REPRO_HEAT_THRESHOLD_C", "30.0"))
 REPRO_HEAT_WIDTH_C = float(os.getenv("AGRI_REPRO_HEAT_WIDTH_C", "2.0"))
-REPRO_HEAT_MAX_HI_REDUCTION = float(os.getenv("AGRI_REPRO_HEAT_MAX_HI_REDUCTION", "0.14"))
+REPRO_HEAT_MAX_HI_REDUCTION = float(os.getenv("AGRI_REPRO_HEAT_MAX_HI_REDUCTION", "0.20"))
+WINDOW_STRESS_MAX_REDUCTION = float(os.getenv("AGRI_WINDOW_STRESS_MAX_REDUCTION", "0.22"))
+WINDOW_STRESS_HEAT_THRESHOLD_C = float(os.getenv("AGRI_WINDOW_STRESS_HEAT_THRESHOLD_C", "30.0"))
+WINDOW_STRESS_COLD_THRESHOLD_C = float(os.getenv("AGRI_WINDOW_STRESS_COLD_THRESHOLD_C", "8.0"))
+WINDOW_STRESS_TEMP_WIDTH_C = float(os.getenv("AGRI_WINDOW_STRESS_TEMP_WIDTH_C", "2.0"))
+WINDOW_STRESS_PAR_REFERENCE = float(os.getenv("AGRI_WINDOW_STRESS_PAR_REFERENCE", "20.0"))
 
 DATA_PATH = os.getenv("AGRI_DATA_PATH", MERGED_DATA_PATH)
 
 VAL_RATIO = 0.2
-SPLIT_MODE = "auto"  # temporal when balanced; otherwise county holdout
+SPLIT_MODE = os.getenv("AGRI_SPLIT_MODE", "auto")  # temporal, spatial_county, spatial_state, auto
 BATCH_TRAIN = int(os.getenv("AGRI_BATCH_TRAIN", "256"))
 BATCH_VAL = int(os.getenv("AGRI_BATCH_VAL", "512"))
 DATA_LOADER_WORKERS = 0  # Dataset is already fully materialized in RAM
@@ -88,6 +113,13 @@ W_SMOOTH = 0.1
 W_STATE = 0.5
 W_PRIOR = 0.03
 W_CANOPY = 3.0
+W_WINDOW_STRESS = float(os.getenv("AGRI_W_WINDOW_STRESS", "0.08"))
+USE_SPATIAL_CONTRAST = bool(int(os.getenv("AGRI_USE_SPATIAL_CONTRAST", "1")))
+W_SPATIAL_CONTRAST = float(os.getenv("AGRI_W_SPATIAL_CONTRAST", "0.40"))
+SPATIAL_CONTRAST_MIN_GAP = float(os.getenv("AGRI_SPATIAL_CONTRAST_MIN_GAP", "0.15"))
+USE_SPATIAL_GROUP_BIAS = bool(int(os.getenv("AGRI_USE_SPATIAL_GROUP_BIAS", "1")))
+W_SPATIAL_GROUP_BIAS = float(os.getenv("AGRI_W_SPATIAL_GROUP_BIAS", "0.15"))
+SPATIAL_GROUP_BIAS_MIN_COUNT = int(os.getenv("AGRI_SPATIAL_GROUP_BIAS_MIN_COUNT", "4"))
 
 PHASE_LAI_ONLY = 20
 PHASE_ANOM_RAMP = 30

@@ -7,6 +7,10 @@ AgriWorld Trainer v2 鈥?鍏ㄥ彉閲忔秷璐圭殑璁粌寰幆
 import os
 import csv
 import time
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -19,7 +23,10 @@ from agriworld.losses import (compute_lai_loss, compute_yield_loss,
                      compute_state_constraint_loss,
                      compute_parameter_prior_loss,
                      compute_canopy_yield_consistency_loss,
-                     compute_static_adaptation_regularization)
+                     compute_static_adaptation_regularization,
+                     compute_spatial_contrast_loss,
+                     compute_group_bias_loss,
+                     compute_window_stress_regularization)
 from agriworld.validate import validate_physics, validate_yield_all
 from agriworld.pretrain import run_all_pretrain
 from agriworld.splits import split_dataset
@@ -181,7 +188,13 @@ def train():
         yr_sb = sb.get("year", None)
         if yr_sb is not None:
             yr_sb = yr_sb.to(C.DEVICE, non_blocking=non_blocking)
-        model.set_static_features(sf)
+        state_sb = sb.get("state_id", None)
+        county_sb = sb.get("county_id", None)
+        if state_sb is not None:
+            state_sb = state_sb.to(C.DEVICE, non_blocking=non_blocking)
+        if county_sb is not None:
+            county_sb = county_sb.to(C.DEVICE, non_blocking=non_blocking)
+        model.set_static_features(sf, state_id=state_sb, county_id=county_sb)
         traj0, py = model(
             sb["forcing"].to(C.DEVICE, non_blocking=non_blocking),
             sb["n_init"].to(C.DEVICE, non_blocking=non_blocking),
@@ -254,6 +267,9 @@ def train():
         s_loss, s_lai, s_yield, s_anom, s_state, nb = 0.0, 0.0, 0.0, 0.0, 0.0, 0
         s_canopy = 0.0
         s_static_adapt = 0.0
+        s_spatial_contrast = 0.0
+        s_spatial_bias = 0.0
+        s_window_stress = 0.0
 
         for batch in tdl:
             forcing = batch["forcing"].to(
@@ -279,18 +295,37 @@ def train():
                 year_b = year_b.to(
                     C.DEVICE, non_blocking=non_blocking
                 )
+            state_b = batch.get("state_id", None)
+            county_b = batch.get("county_id", None)
+            if state_b is not None:
+                state_b = state_b.to(C.DEVICE, non_blocking=non_blocking)
+            if county_b is not None:
+                county_b = county_b.to(C.DEVICE, non_blocking=non_blocking)
 
             # 姣?batch 娉ㄥ叆缃戞牸鐗瑰紓鎬у弬鏁?
-            model.set_static_features(static_f)
+            model.set_static_features(static_f, state_id=state_b, county_id=county_b)
 
             traj, pred_yield = model(forcing, n_init, year=year_b)
             lai_loss = compute_lai_loss(
                 traj, obs_lai, mask, tgt_yield=tgt_yield
             )
             yield_loss, _, _ = compute_yield_loss(pred_yield, tgt_yield)
+            spatial_contrast = compute_spatial_contrast_loss(
+                pred_yield,
+                tgt_yield,
+                county_id=county_b,
+                min_gap=getattr(C, "SPATIAL_CONTRAST_MIN_GAP", 0.15),
+            ) if getattr(C, "USE_SPATIAL_CONTRAST", True) else pred_yield.new_tensor(0.0)
+            spatial_bias = compute_group_bias_loss(
+                pred_yield,
+                tgt_yield,
+                group_id=state_b,
+                min_count=getattr(C, "SPATIAL_GROUP_BIAS_MIN_COUNT", 4),
+            ) if getattr(C, "USE_SPATIAL_GROUP_BIAS", True) else pred_yield.new_tensor(0.0)
             state_reg = compute_state_constraint_loss(model, traj)
             prior_reg = compute_parameter_prior_loss(model)
             static_adapt_reg = compute_static_adaptation_regularization(model)
+            window_stress_reg = compute_window_stress_regularization(model)
             canopy_reg = compute_canopy_yield_consistency_loss(
                 traj, tgt_yield, obs_lai=obs_lai, mask_lai=mask
             )
@@ -334,7 +369,10 @@ def train():
                 C.W_STATE * state_reg +
                 C.W_PRIOR * prior_reg +
                 C.W_CANOPY * canopy_reg +
-                getattr(C, "W_STATIC_ADAPT", 0.0) * static_adapt_reg
+                getattr(C, "W_STATIC_ADAPT", 0.0) * static_adapt_reg +
+                getattr(C, "W_WINDOW_STRESS", 0.0) * window_stress_reg +
+                w_y * getattr(C, "W_SPATIAL_CONTRAST", 0.0) * spatial_contrast +
+                w_y * getattr(C, "W_SPATIAL_GROUP_BIAS", 0.0) * spatial_bias
             )
 
             # VPD 杈呭姪 Loss 鈥?浠?Phase 2+ 鍚敤, 缁?D0 鐩存帴姊害
@@ -380,6 +418,9 @@ def train():
             s_state += state_reg.item()
             s_canopy += canopy_reg.item()
             s_static_adapt += static_adapt_reg.item()
+            s_spatial_contrast += spatial_contrast.item()
+            s_spatial_bias += spatial_bias.item()
+            s_window_stress += window_stress_reg.item()
             nb += 1
 
         if nb == 0:
@@ -422,8 +463,22 @@ def train():
                         year_vb = year_vb.to(
                             C.DEVICE, non_blocking=non_blocking
                         )
+                    state_vb = batch.get("state_id", None)
+                    county_vb = batch.get("county_id", None)
+                    if state_vb is not None:
+                        state_vb = state_vb.to(
+                            C.DEVICE, non_blocking=non_blocking
+                        )
+                    if county_vb is not None:
+                        county_vb = county_vb.to(
+                            C.DEVICE, non_blocking=non_blocking
+                        )
 
-                    model.set_static_features(static_f)
+                    model.set_static_features(
+                        static_f,
+                        state_id=state_vb,
+                        county_id=county_vb,
+                    )
                     traj, pred_yield = model(
                         forcing, n_init, year=year_vb
                     )
@@ -434,9 +489,22 @@ def train():
                     yl, _, _ = compute_yield_loss(
                         pred_yield, tgt_yield
                     )
+                    spatial_l = compute_spatial_contrast_loss(
+                        pred_yield,
+                        tgt_yield,
+                        county_id=county_vb,
+                        min_gap=getattr(C, "SPATIAL_CONTRAST_MIN_GAP", 0.15),
+                    ) if getattr(C, "USE_SPATIAL_CONTRAST", True) else pred_yield.new_tensor(0.0)
+                    spatial_bias_l = compute_group_bias_loss(
+                        pred_yield,
+                        tgt_yield,
+                        group_id=state_vb,
+                        min_count=getattr(C, "SPATIAL_GROUP_BIAS_MIN_COUNT", 4),
+                    ) if getattr(C, "USE_SPATIAL_GROUP_BIAS", True) else pred_yield.new_tensor(0.0)
                     state_l = compute_state_constraint_loss(model, traj)
                     prior_l = compute_parameter_prior_loss(model)
                     static_l = compute_static_adaptation_regularization(model)
+                    window_l = compute_window_stress_regularization(model)
                     canopy_l = compute_canopy_yield_consistency_loss(
                         traj, tgt_yield, obs_lai=obs_lai, mask_lai=mask
                     )
@@ -446,7 +514,10 @@ def train():
                         C.W_STATE * state_l +
                         C.W_PRIOR * prior_l +
                         C.W_CANOPY * canopy_l +
-                        getattr(C, "W_STATIC_ADAPT", 0.0) * static_l
+                        getattr(C, "W_STATIC_ADAPT", 0.0) * static_l +
+                        getattr(C, "W_WINDOW_STRESS", 0.0) * window_l +
+                        w_y * getattr(C, "W_SPATIAL_CONTRAST", 0.0) * spatial_l +
+                        w_y * getattr(C, "W_SPATIAL_GROUP_BIAS", 0.0) * spatial_bias_l
                     ).item()
                     val_lai_sum += lai_l.item()
                     val_yield_sum += yl.item()
@@ -491,6 +562,9 @@ def train():
             "state_loss": s_state / nb,
             "canopy_loss": s_canopy / nb,
             "static_adapt_loss": s_static_adapt / nb,
+            "spatial_contrast_loss": s_spatial_contrast / nb,
+            "spatial_group_bias_loss": s_spatial_bias / nb,
+            "window_stress_loss": s_window_stress / nb,
             "anom_loss": s_anom / nb,
             "HI": hi,
             "yield_scale": ys,
@@ -507,13 +581,17 @@ def train():
         })
 
         # 鈹€鈹€ 鏃ュ織 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-        if (ep + 1) % 5 == 0 or ep == 0:
+        log_every = max(1, int(getattr(C, "TRAIN_LOG_EVERY", 25)))
+        if (ep + 1) % log_every == 0 or ep == 0 or ep == C.MAX_EPOCHS - 1:
             print(
                 f"Ep [{ep+1:03d}/{C.MAX_EPOCHS}] | T: {s_loss/nb:.4f} | V: {avg_val:.4f} "
                 f"| LAI: {s_lai/nb:.4f}/{avg_val_lai:.4f} "
                 f"| Yld: {s_yield/nb:.4f}/{avg_val_yield:.4f} "
                 f"| State: {s_state/nb:.4f} | Can: {s_canopy/nb:.4f} "
                 f"| Stat: {s_static_adapt/nb:.4f} "
+                f"| Sp: {s_spatial_contrast/nb:.4f} "
+                f"| SB: {s_spatial_bias/nb:.4f} "
+                f"| Win: {s_window_stress/nb:.4f} "
                 f"| Anom: {s_anom/nb:.6f} | HI: {hi:.3f} "
                 f"| YS: {ys:.3f} | YT: {yt:.3f} "
                 f"| RUE: {rue:.2f} | k: {k_ext:.3f} | D0: {D0:.2f} "
@@ -535,8 +613,9 @@ def train():
     model.load_state_dict(torch.load(
         best_path, weights_only=True
     ))
-    validate_yield_all(model, vdl, C.DEVICE)
-    validate_physics(model, vdl, C.DEVICE, n_show=10)
+    if getattr(C, "TRAIN_FINAL_VALIDATE", False):
+        validate_yield_all(model, vdl, C.DEVICE)
+        validate_physics(model, vdl, C.DEVICE, n_show=10)
 
 
 if __name__ == "__main__":

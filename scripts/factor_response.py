@@ -4,6 +4,9 @@ import argparse
 import csv
 import json
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 from torch.utils.data import DataLoader
@@ -22,13 +25,26 @@ def _predict(model, batch, device, forcing=None, n_init=None):
     year = batch.get("year", None)
     if year is not None:
         year = year.to(device)
-    model.set_static_features(static)
+    state_id = batch.get("state_id", None)
+    county_id = batch.get("county_id", None)
+    if state_id is not None:
+        state_id = state_id.to(device)
+    if county_id is not None:
+        county_id = county_id.to(device)
+    model.set_static_features(static, state_id=state_id, county_id=county_id)
     _, pred = model(forcing, n_init, year=year)
     return pred
 
 
+def _crop_progress(model, forcing):
+    gdd_cum = forcing[..., 6:7]
+    gdd_em = torch.abs(model.ode_func.pheno_expert.gdd_emergence)
+    gdd_ma = torch.abs(model.ode_func.pheno_expert.gdd_maturity)
+    return torch.clamp((gdd_cum - gdd_em) / (gdd_ma - gdd_em + 1e-6), 0.0, 1.0)
+
+
 @torch.no_grad()
-def audit_factor_responses(model, dataloader, device, max_batches=3):
+def audit_factor_responses(model, dataloader, device, max_batches=3, print_results=True):
     """Report mean yield response to controlled one-factor perturbations."""
     model.eval()
     accum = {
@@ -38,6 +54,10 @@ def audit_factor_responses(model, dataloader, device, max_batches=3):
         "nitrogen": [],
         "temperature": [],
         "heat_extreme": [],
+        "window_heat": [],
+        "window_vpd": [],
+        "window_radiation": [],
+        "window_water": [],
     }
 
     for batch_idx, batch in enumerate(dataloader):
@@ -92,6 +112,68 @@ def audit_factor_responses(model, dataloader, device, max_batches=3):
             _predict(model, batch, device, heat_high, n_init),
         )
 
+        progress = _crop_progress(model, forcing)
+        repro_mask = ((progress >= 0.50) & (progress <= 0.70)).squeeze(-1)
+        for name, channel, low_mult, high_mult in [
+            ("window_vpd", 4, 1.0, 1.25),
+            ("window_radiation", 2, 0.80, 1.20),
+        ]:
+            low = forcing.clone()
+            high = forcing.clone()
+            low[..., channel] = torch.where(
+                repro_mask,
+                low[..., channel] * low_mult,
+                low[..., channel],
+            )
+            high[..., channel] = torch.where(
+                repro_mask,
+                high[..., channel] * high_mult,
+                high[..., channel],
+            )
+            perturbations[name] = (
+                _predict(model, batch, device, low, n_init),
+                _predict(model, batch, device, high, n_init),
+            )
+
+        water_low = forcing.clone()
+        water_high = forcing.clone()
+        water_low[..., 0] = torch.where(
+            repro_mask,
+            water_low[..., 0] * 0.10,
+            water_low[..., 0],
+        )
+        water_low[..., 1] = torch.where(
+            repro_mask,
+            water_low[..., 1] * 1.25,
+            water_low[..., 1],
+        )
+        water_high[..., 0] = torch.where(
+            repro_mask,
+            water_high[..., 0] + 5.0,
+            water_high[..., 0],
+        )
+        water_high[..., 1] = torch.where(
+            repro_mask,
+            water_high[..., 1] * 0.90,
+            water_high[..., 1],
+        )
+        perturbations["window_water"] = (
+            _predict(model, batch, device, water_low, n_init),
+            _predict(model, batch, device, water_high, n_init),
+        )
+
+        heat_window_low = forcing.clone()
+        heat_window_high = forcing.clone()
+        heat_window_high[..., 3] = torch.where(
+            repro_mask,
+            heat_window_high[..., 3] + heat_delta_c,
+            heat_window_high[..., 3],
+        )
+        perturbations["window_heat"] = (
+            _predict(model, batch, device, heat_window_low, n_init),
+            _predict(model, batch, device, heat_window_high, n_init),
+        )
+
         for name, (low_pred, high_pred) in perturbations.items():
             response_pct = 100.0 * (high_pred - low_pred) / baseline
             accum[name].append(response_pct.cpu())
@@ -104,33 +186,50 @@ def audit_factor_responses(model, dataloader, device, max_batches=3):
         "nitrogen": "positive",
         "temperature": "context",
         "heat_extreme": "negative",
+        "window_heat": "negative",
+        "window_vpd": "negative",
+        "window_radiation": "positive",
+        "window_water": "positive",
     }
     eps = float(getattr(C, "FACTOR_RESPONSE_EPS", 0.5))
     context_warn_abs = {
         "precipitation": 50.0,
         "temperature": 20.0,
     }
-    print("\n" + "=" * 80)
-    print("AGRICULTURAL FACTOR RESPONSE AUDIT")
-    print("=" * 80)
-    print("  Note: nitrogen uses absolute low/high N scenarios (60 vs 240 kg/ha).")
+    if print_results:
+        print("\n" + "=" * 80)
+        print("AGRICULTURAL FACTOR RESPONSE AUDIT")
+        print("=" * 80)
+        print("  Note: nitrogen uses absolute low/high N scenarios (60 vs 240 kg/ha).")
     heat_delta_c = float(getattr(C, "HEAT_AUDIT_DELTA_C", 6.0))
     hot_day_c = float(getattr(C, "HEAT_AUDIT_HOT_DAY_C", 28.0))
-    print(
-        f"  Note: heat_extreme adds +{heat_delta_c:g}C only on days "
-        f"with Tmean >= {hot_day_c:g}C."
-    )
+    if print_results:
+        print(
+            f"  Note: heat_extreme adds +{heat_delta_c:g}C only on days "
+            f"with Tmean >= {hot_day_c:g}C."
+        )
+        print("  Note: window_* perturbations act only during post-emergence progress 0.50-0.70.")
     for name, chunks in accum.items():
         if not chunks:
             continue
         values = torch.cat(chunks)
         mean = values.mean().item()
         median = values.median().item()
+        q25 = torch.quantile(values, 0.25).item()
+        q75 = torch.quantile(values, 0.75).item()
         expected_direction = expected[name]
         if expected_direction == "positive":
-            status = "PASS" if mean >= eps else "WARN"
+            active_fraction = (values >= eps).float().mean().item() * 100.0
+            median_pass = median >= eps
+            status = "PASS" if mean >= eps and median_pass else (
+                "PARTIAL" if mean >= eps else "WARN"
+            )
         elif expected_direction == "negative":
-            status = "PASS" if mean <= -eps else "WARN"
+            active_fraction = (values <= -eps).float().mean().item() * 100.0
+            median_pass = median <= -eps
+            status = "PASS" if mean <= -eps and median_pass else (
+                "PARTIAL" if mean <= -eps else "WARN"
+            )
         else:
             warn_abs = context_warn_abs.get(name)
             status = (
@@ -138,18 +237,24 @@ def audit_factor_responses(model, dataloader, device, max_batches=3):
                 if warn_abs is not None and abs(mean) > warn_abs
                 else "INFO"
             )
-        print(
-            f"  {status:4s} | {name:14s} high-minus-low yield response: "
-            f"mean={mean:+7.2f}% median={median:+7.2f}%"
-        )
+            active_fraction = (values.abs() >= eps).float().mean().item() * 100.0
+        if print_results:
+            print(
+                f"  {status:4s} | {name:14s} high-minus-low yield response: "
+                f"mean={mean:+7.2f}% median={median:+7.2f}% "
+                f"active={active_fraction:5.1f}%"
+            )
         results[name] = {
             "mean_response_pct": mean,
             "median_response_pct": median,
+            "q25_response_pct": q25,
+            "q75_response_pct": q75,
+            "active_fraction_pct": active_fraction,
             "expected": expected_direction,
             "status": status,
             "epsilon_pct": eps,
             "heat_audit_hot_day_c": hot_day_c if name == "heat_extreme" else None,
-            "heat_audit_delta_c": heat_delta_c if name == "heat_extreme" else None,
+            "heat_audit_delta_c": heat_delta_c if name in {"heat_extreme", "window_heat"} else None,
         }
     return results
 
@@ -169,6 +274,9 @@ def save_factor_results(results, prefix="factor_response"):
                 "expected",
                 "mean_response_pct",
                 "median_response_pct",
+                "q25_response_pct",
+                "q75_response_pct",
+                "active_fraction_pct",
                 "epsilon_pct",
                 "heat_audit_hot_day_c",
                 "heat_audit_delta_c",
