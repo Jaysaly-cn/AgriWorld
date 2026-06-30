@@ -1,0 +1,578 @@
+{
+  "baseline": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_baseline_best.pth",
+    "description": "CouplingHead baseline with gentle soft temperature stress",
+    "checkpoint_size_kb": 37.5986328125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_baseline_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_baseline_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 22.705155730104376,
+      "r2": -0.4427753940676189,
+      "nrmse_pct": 11.746688711956255
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 22.705155730104376,
+        "mape_pct": 8.977391246118604
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 2.2119269371032715,
+        "median_response_pct": 0.3897940516471863,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 47.241336822509766,
+        "median_response_pct": 46.98448944091797,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": -29.387073516845703,
+        "median_response_pct": -29.21300506591797,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 31.97124671936035,
+        "median_response_pct": 32.11680603027344,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": 4.143336296081543,
+        "median_response_pct": 4.245884418487549,
+        "expected": "context"
+      }
+    },
+    "time_sec": 1537.422604560852
+  },
+  "lstm_res": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_lstm_res_best.pth",
+    "description": "LSTM temporal residual",
+    "checkpoint_size_kb": 37.5986328125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_lstm_res_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_lstm_res_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 21.845514298437923,
+      "r2": -0.3355935225914606,
+      "nrmse_pct": 11.30194653878113
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 21.845514298437923,
+        "mape_pct": 8.766847121262204
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 2.0297770500183105,
+        "median_response_pct": 0.3132823705673218,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 48.42344284057617,
+        "median_response_pct": 48.16408157348633,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": -29.883373260498047,
+        "median_response_pct": -29.775489807128906,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 32.359825134277344,
+        "median_response_pct": 32.470027923583984,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": 4.339026927947998,
+        "median_response_pct": 4.435464859008789,
+        "expected": "context"
+      }
+    },
+    "time_sec": 1719.5519247055054
+  },
+  "no_year_trend": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_no_year_trend_best.pth",
+    "description": "Disable yield year trend extrapolation",
+    "checkpoint_size_kb": 37.8955078125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_year_trend_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_year_trend_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 25.518556138036573,
+      "r2": -0.8224765671557903,
+      "nrmse_pct": 13.202223270138221
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 25.518556138036573,
+        "mape_pct": 9.941039169024583
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 3.733853340148926,
+        "median_response_pct": 0.6270617246627808,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 50.80562210083008,
+        "median_response_pct": 50.622833251953125,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": -33.238037109375,
+        "median_response_pct": -32.90532302856445,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 35.29621887207031,
+        "median_response_pct": 35.1456298828125,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": 4.557592391967773,
+        "median_response_pct": 4.570359230041504,
+        "expected": "context"
+      }
+    },
+    "time_sec": 965.2667682170868
+  },
+  "no_water_floor": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_no_water_floor_best.pth",
+    "description": "Use near-zero soil water stress floor",
+    "checkpoint_size_kb": 37.9423828125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_water_floor_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_water_floor_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 242.75335429091817,
+      "r2": -163.92262405348717,
+      "nrmse_pct": 125.59033377858877
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 242.75335429091817,
+        "mape_pct": 104.30194318496761
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 156.38243103027344,
+        "median_response_pct": 73.01319885253906,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 43.40548324584961,
+        "median_response_pct": 42.896385192871094,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": -3.8304672241210938,
+        "median_response_pct": -2.993955373764038,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 23.435548782348633,
+        "median_response_pct": 27.0037784576416,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": 2.6706833839416504,
+        "median_response_pct": 2.5660531520843506,
+        "expected": "context"
+      }
+    },
+    "time_sec": 1556.2056274414062
+  },
+  "no_canopy_loss": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_no_canopy_loss_best.pth",
+    "description": "Disable canopy-yield consistency loss",
+    "checkpoint_size_kb": 37.9423828125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_canopy_loss_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_canopy_loss_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 23.352835156454617,
+      "r2": -0.5262616237556184,
+      "nrmse_pct": 12.081770694960989
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 23.352835156454617,
+        "mape_pct": 9.190082911543387
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 2.727334499359131,
+        "median_response_pct": 0.46529850363731384,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 50.163883209228516,
+        "median_response_pct": 49.99003982543945,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": -32.92947769165039,
+        "median_response_pct": -32.730621337890625,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 30.459951400756836,
+        "median_response_pct": 30.384136199951172,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": 4.535490989685059,
+        "median_response_pct": 4.615773677825928,
+        "expected": "context"
+      }
+    },
+    "time_sec": 1586.3579246997833
+  },
+  "no_coupling_anomaly": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_no_coupling_anomaly_best.pth",
+    "description": "Disable coupling anomaly term",
+    "checkpoint_size_kb": 38.1767578125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_coupling_anomaly_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_coupling_anomaly_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 22.672577096412002,
+      "r2": -0.43863801400454205,
+      "nrmse_pct": 11.729833902714065
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 22.672577096412002,
+        "mape_pct": 9.02687433112003
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 2.3437867164611816,
+        "median_response_pct": 0.5066117644309998,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 48.747108459472656,
+        "median_response_pct": 48.558685302734375,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": -30.4039306640625,
+        "median_response_pct": -30.275381088256836,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 37.65016174316406,
+        "median_response_pct": 37.593292236328125,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": 4.498877048492432,
+        "median_response_pct": 4.570615291595459,
+        "expected": "context"
+      }
+    },
+    "time_sec": 1533.3610401153564
+  },
+  "no_vpd_stress": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_no_vpd_stress_best.pth",
+    "description": "Disable VPD stress multiplier",
+    "checkpoint_size_kb": 37.8955078125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_vpd_stress_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_vpd_stress_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 21.73599401161124,
+      "r2": -0.32223536427762056,
+      "nrmse_pct": 11.245285367534837
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 21.73599401161124,
+        "mape_pct": 8.893142728487996
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 1.6218591928482056,
+        "median_response_pct": 0.14347951114177704,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 53.40769577026367,
+        "median_response_pct": 53.22862243652344,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": 0.0,
+        "median_response_pct": 0.0,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 38.618961334228516,
+        "median_response_pct": 38.37693786621094,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": 3.5804197788238525,
+        "median_response_pct": 3.6128299236297607,
+        "expected": "context"
+      }
+    },
+    "time_sec": 1450.1878945827484
+  },
+  "no_nitrogen_stress": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_no_nitrogen_stress_best.pth",
+    "description": "Disable nitrogen stress multiplier",
+    "checkpoint_size_kb": 38.1298828125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_nitrogen_stress_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_nitrogen_stress_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 22.418275022939604,
+      "r2": -0.40654665559876935,
+      "nrmse_pct": 11.598268749345632
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 22.418275022939604,
+        "mape_pct": 8.913290783564493
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 2.3938682079315186,
+        "median_response_pct": 0.42751839756965637,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 48.74222946166992,
+        "median_response_pct": 48.436309814453125,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": -30.968185424804688,
+        "median_response_pct": -30.66695785522461,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 2.339439868927002,
+        "median_response_pct": 2.4203741550445557,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": 4.378349781036377,
+        "median_response_pct": 4.472708225250244,
+        "expected": "context"
+      }
+    },
+    "time_sec": 1348.9269664287567
+  },
+  "no_temperature_stress": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_no_temperature_stress_best.pth",
+    "description": "Disable temperature stress multiplier",
+    "checkpoint_size_kb": 38.2705078125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_temperature_stress_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_no_temperature_stress_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 21.675304231755117,
+      "r2": -0.31486195921036586,
+      "nrmse_pct": 11.213887038431029
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 21.675304231755117,
+        "mape_pct": 8.724185808973075
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 2.0608434677124023,
+        "median_response_pct": 0.36325541138648987,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 48.6900634765625,
+        "median_response_pct": 48.40863800048828,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": -29.55942726135254,
+        "median_response_pct": -29.28582763671875,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 30.450109481811523,
+        "median_response_pct": 30.566930770874023,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": 0.1756601631641388,
+        "median_response_pct": 0.1787339448928833,
+        "expected": "context"
+      }
+    },
+    "time_sec": 1403.5047883987427
+  },
+  "temp_soft_035": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_temp_soft_035_best.pth",
+    "description": "Previous v3.21 soft temperature stress strength",
+    "checkpoint_size_kb": 37.8955078125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_temp_soft_035_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_temp_soft_035_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 22.36168937764602,
+      "r2": -0.39945512838423847,
+      "nrmse_pct": 11.568993726142528
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 22.36168937764602,
+        "mape_pct": 8.854308391875861
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 2.144333839416504,
+        "median_response_pct": 0.3927435576915741,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 46.4870491027832,
+        "median_response_pct": 46.25410842895508,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": -29.376981735229492,
+        "median_response_pct": -29.181560516357422,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 34.258792877197266,
+        "median_response_pct": 34.296714782714844,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": 8.413331031799316,
+        "median_response_pct": 8.55644416809082,
+        "expected": "context"
+      }
+    },
+    "time_sec": 1426.8132569789886
+  },
+  "temp_soft_010": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_temp_soft_010_best.pth",
+    "description": "Very gentle soft temperature stress",
+    "checkpoint_size_kb": 37.8955078125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_temp_soft_010_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_temp_soft_010_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 22.40507968244866,
+      "r2": -0.4048913632202169,
+      "nrmse_pct": 11.591442037428838
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 22.40507968244866,
+        "mape_pct": 8.944705979586058
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 2.291760206222534,
+        "median_response_pct": 0.4159313142299652,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 49.220191955566406,
+        "median_response_pct": 48.8913459777832,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": -30.84956932067871,
+        "median_response_pct": -30.58722496032715,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 30.694915771484375,
+        "median_response_pct": 30.59027862548828,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": 2.666285753250122,
+        "median_response_pct": 2.6848018169403076,
+        "expected": "context"
+      }
+    },
+    "time_sec": 1488.547958612442
+  },
+  "hard_temperature_stress": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_hard_temperature_stress_best.pth",
+    "description": "Use raw Wang-Engel temperature stress multiplier",
+    "checkpoint_size_kb": 38.3642578125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_hard_temperature_stress_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_hard_temperature_stress_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 39.877790246671374,
+      "r2": -3.4505319833564316,
+      "nrmse_pct": 20.631084592265005
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 39.877790246671374,
+        "mape_pct": 15.370981978498815
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 1.9972411394119263,
+        "median_response_pct": 0.053290992975234985,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 41.025394439697266,
+        "median_response_pct": 40.95827102661133,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": -31.907974243164062,
+        "median_response_pct": -31.293956756591797,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 19.419952392578125,
+        "median_response_pct": 18.665380477905273,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": 49.914459228515625,
+        "median_response_pct": 49.89378356933594,
+        "expected": "context"
+      }
+    },
+    "time_sec": 1441.1538829803467
+  }
+}

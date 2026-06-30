@@ -1,0 +1,2 @@
+variant,status,schema,model_version,description,rmse_bu_acre,nrmse_pct,r2,corn_rmse,corn_mape_pct,precipitation_pct,radiation_pct,vpd_pct,nitrogen_pct,temperature_pct,heat_extreme_pct,time_sec
+no_reproductive_heat_penalty,OK,agriworld-v3.26,no_reproductive_heat_penalty,Disable reproductive-stage heat penalty on harvest index,19.923851988089414,10.307759613243633,-0.11095475091788742,19.923851988089414,8.263359791316006,1.2069228887557983,49.34376525878906,-30.641447067260742,37.349082946777344,-0.41961726546287537,-0.2950018644332886,

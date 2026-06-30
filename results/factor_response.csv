@@ -1,0 +1,7 @@
+factor,status,expected,mean_response_pct,median_response_pct,epsilon_pct,heat_audit_hot_day_c,heat_audit_delta_c
+precipitation,INFO,context,1.1563737392425537,0.33675339818000793,0.5,,
+radiation,PASS,positive,47.56529998779297,47.463531494140625,0.5,,
+vpd,PASS,negative,-29.379507064819336,-29.2303466796875,0.5,,
+nitrogen,PASS,positive,38.17516326904297,38.17177963256836,0.5,,
+temperature,INFO,context,-1.730283498764038,-1.4037139415740967,0.5,,
+heat_extreme,PASS,negative,-0.7565101981163025,-0.5914701819419861,0.5,28.0,6.0

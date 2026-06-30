@@ -1,0 +1,2 @@
+variant,status,schema,model_version,description,rmse_bu_acre,nrmse_pct,r2,corn_rmse,corn_mape_pct,precipitation_pct,radiation_pct,vpd_pct,nitrogen_pct,temperature_pct,heat_extreme_pct,time_sec
+no_yield_residual,OK,agriworld-v3.24,no_yield_residual,Disable static-conditioned yield residual head,19.070721452160964,9.86638590256132,-0.01785051981544128,19.070721452160964,7.923228418399181,0.9491851925849915,45.76558303833008,-27.812440872192383,38.71397399902344,-0.06652659922838211,-0.25526824593544006,

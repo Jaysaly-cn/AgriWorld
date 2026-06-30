@@ -1,0 +1,81 @@
+{
+  "no_static_crop_params": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/Newest_version/saved_models/agriworld_no_static_crop_params_best.pth",
+    "description": "Disable structured county-level crop parameter adjustments",
+    "schema": "agriworld-v3.26",
+    "model_version": "no_static_crop_params",
+    "checkpoint_size_kb": 49.6025390625,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/Newest_version/results/ablation_no_static_crop_params_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/Newest_version/results/ablation_no_static_crop_params_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 20.13749332177598,
+      "r2": -0.13490778689706207,
+      "nrmse_pct": 10.418288616993026
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 20.13749332177598,
+        "mape_pct": 8.370092745795567
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 1.3303278684616089,
+        "median_response_pct": 0.31548434495925903,
+        "expected": "context",
+        "status": "INFO",
+        "epsilon_pct": 0.5,
+        "heat_audit_hot_day_c": null,
+        "heat_audit_delta_c": null
+      },
+      "radiation": {
+        "mean_response_pct": 49.9051628112793,
+        "median_response_pct": 49.753929138183594,
+        "expected": "positive",
+        "status": "PASS",
+        "epsilon_pct": 0.5,
+        "heat_audit_hot_day_c": null,
+        "heat_audit_delta_c": null
+      },
+      "vpd": {
+        "mean_response_pct": -31.466636657714844,
+        "median_response_pct": -31.215845108032227,
+        "expected": "negative",
+        "status": "PASS",
+        "epsilon_pct": 0.5,
+        "heat_audit_hot_day_c": null,
+        "heat_audit_delta_c": null
+      },
+      "nitrogen": {
+        "mean_response_pct": 36.33594512939453,
+        "median_response_pct": 36.64920425415039,
+        "expected": "positive",
+        "status": "PASS",
+        "epsilon_pct": 0.5,
+        "heat_audit_hot_day_c": null,
+        "heat_audit_delta_c": null
+      },
+      "temperature": {
+        "mean_response_pct": -1.3863736391067505,
+        "median_response_pct": -1.1549614667892456,
+        "expected": "context",
+        "status": "INFO",
+        "epsilon_pct": 0.5,
+        "heat_audit_hot_day_c": null,
+        "heat_audit_delta_c": null
+      },
+      "heat_extreme": {
+        "mean_response_pct": -0.6174679398536682,
+        "median_response_pct": -0.48361796140670776,
+        "expected": "negative",
+        "status": "PASS",
+        "epsilon_pct": 0.5,
+        "heat_audit_hot_day_c": 28.0,
+        "heat_audit_delta_c": 6.0
+      }
+    },
+    "time_sec": null
+  }
+}

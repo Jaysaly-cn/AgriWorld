@@ -1,0 +1,2 @@
+variant,status,schema,model_version,description,rmse_bu_acre,nrmse_pct,r2,corn_rmse,corn_mape_pct,precipitation_pct,radiation_pct,vpd_pct,nitrogen_pct,temperature_pct,heat_extreme_pct,time_sec
+baseline,OK,agriworld-v3.26,phys_spatial,V3.26 mainline: static crop params + static interaction gates,19.67679732468206,10.179943963777042,-0.0835740147856947,19.67679732468206,8.180619027979832,1.1563737392425537,47.56529998779297,-29.379507064819336,38.17516326904297,-1.730283498764038,-0.7565101981163025,

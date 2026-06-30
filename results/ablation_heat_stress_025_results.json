@@ -1,0 +1,55 @@
+{
+  "heat_stress_025": {
+    "status": "OK",
+    "checkpoint": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/saved_models/agriworld_heat_stress_025_best.pth",
+    "description": "Stronger extreme-heat stress penalty",
+    "checkpoint_size_kb": 37.9892578125,
+    "eval_log": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_heat_stress_025_eval.log",
+    "eval_summary_pt": "/data4/Agri/yukaijie/AgriWorld/AgriWorld/V3.0/results/ablation_heat_stress_025_eval.pt",
+    "yield_all": {
+      "rmse_bu_acre": 21.752526930965182,
+      "r2": -0.32424757723734676,
+      "nrmse_pct": 11.253838801805854
+    },
+    "yield_per_crop": {
+      "Corn": {
+        "n": 187,
+        "rmse": 21.752526930965182,
+        "mape_pct": 8.79365385126072
+      }
+    },
+    "factor_responses": {
+      "precipitation": {
+        "mean_response_pct": 2.067049503326416,
+        "median_response_pct": 0.35848337411880493,
+        "expected": "context"
+      },
+      "radiation": {
+        "mean_response_pct": 49.4686393737793,
+        "median_response_pct": 49.13566589355469,
+        "expected": "positive"
+      },
+      "vpd": {
+        "mean_response_pct": -29.924232482910156,
+        "median_response_pct": -29.583200454711914,
+        "expected": "negative"
+      },
+      "nitrogen": {
+        "mean_response_pct": 30.334941864013672,
+        "median_response_pct": 30.392520904541016,
+        "expected": "positive"
+      },
+      "temperature": {
+        "mean_response_pct": -1.0246853828430176,
+        "median_response_pct": -0.9360161423683167,
+        "expected": "context"
+      },
+      "heat_extreme": {
+        "mean_response_pct": -0.44494473934173584,
+        "median_response_pct": -0.35601019859313965,
+        "expected": "negative"
+      }
+    },
+    "time_sec": null
+  }
+}

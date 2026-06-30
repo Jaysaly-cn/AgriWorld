@@ -1,0 +1,29 @@
+静态特征索引表
+
+Index  Variable          Unit       Source
+─────  ────────────────  ─────────  ────────
+ 0     Elevation         m          USGS 3DEP
+ 1     Slope             degree     USGS 3DEP
+ 2     Aspect            degree     USGS 3DEP
+ 3     Bulk_Density      g/cm³      SoilGrids (÷100)
+ 4     SOC               g/kg       SoilGrids (÷10)
+ 5     Clay_Fraction     %          SoilGrids (÷10)
+ 6     Sand_Fraction     %          SoilGrids (÷10)
+ 7     Total_Nitrogen    g/kg       SoilGrids (÷100)
+ 8     pH                pH         SoilGrids (÷10)
+ 9     N_Rate            kg N/ha    USDA ARMS
+10     Crop_Type         CDL code   USDA CDL (1=corn, 5=soy)
+
+Weather forcing 索引表
+
+Index  Variable    Unit         Derivation
+─────  ──────────  ───────────  ──────────────────────
+ 0     Precip      mm/day       Daymet prcp (direct)
+ 1     ETo         mm/day       Hargreaves (Tmax,Tmin,lat,DOY)
+ 2     SRAD        MJ/m²/day    Daymet srad × 0.0864
+ 3     PAR         MJ/m²/day    SRAD × 0.48
+ 4     Tmax        °C           Daymet tmax (direct)
+ 5     Tmin        °C           Daymet tmin (direct)
+ 6     Tmean       °C           (Tmax+Tmin)/2
+ 7     VPD         kPa          Magnus(SVP) - Daymet vp/1000
+ 8     GDD         °C·day       max(0, Tmean - 10)

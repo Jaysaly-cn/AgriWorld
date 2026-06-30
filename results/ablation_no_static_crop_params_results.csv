@@ -1,0 +1,2 @@
+variant,status,schema,model_version,description,rmse_bu_acre,nrmse_pct,r2,corn_rmse,corn_mape_pct,precipitation_pct,radiation_pct,vpd_pct,nitrogen_pct,temperature_pct,heat_extreme_pct,time_sec
+no_static_crop_params,OK,agriworld-v3.26,no_static_crop_params,Disable structured county-level crop parameter adjustments,20.13749332177598,10.418288616993026,-0.13490778689706207,20.13749332177598,8.370092745795567,1.3303278684616089,49.9051628112793,-31.466636657714844,36.33594512939453,-1.3863736391067505,-0.6174679398536682,
