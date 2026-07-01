@@ -27,7 +27,7 @@ from agriworld.log_utils import tee_stdout
 from agriworld.dataset import AgriTensorDataset
 from agriworld.simulator import AgriWorldSimulator
 from agriworld.validate import validate_physics, validate_smap, validate_yield_all
-from agriworld.units import CORN_T_HA_TO_BU_AC
+from agriworld.units import t_ha_to_bu_ac_factor
 from agriworld.splits import split_dataset
 from agriworld.window_stress import WINDOW_NAMES, FACTOR_NAMES
 from scripts.factor_response import audit_factor_responses
@@ -41,12 +41,36 @@ def _load_model_state(model, state):
     else:
         payload = state
         epoch_info, best_val = "? (raw state_dict)", "?"
+    current = model.state_dict()
+    skipped = []
+    for key in list(payload.keys()):
+        if key in current and payload[key].shape != current[key].shape:
+            skipped.append(key)
+            payload.pop(key)
+    if skipped:
+        print(f"  Shape-mismatched checkpoint keys skipped: {len(skipped)}")
     incompatible = model.load_state_dict(payload, strict=False)
     if incompatible.missing_keys:
         print(f"  Missing checkpoint keys initialized from defaults: {len(incompatible.missing_keys)}")
     if incompatible.unexpected_keys:
         print(f"  Unexpected checkpoint keys ignored: {len(incompatible.unexpected_keys)}")
     return epoch_info, best_val
+
+
+def _crop_yield_parameter_summary(model):
+    crop_ids = torch.tensor([1, 5], device=next(model.parameters()).device)
+    return {
+        "Corn": {
+            "HI": float(model.crop_harvest_index(crop_ids[:1]).item()),
+            "yield_scale": float(model.crop_yield_scale(crop_ids[:1]).item()),
+            "yield_year_trend": float(model.crop_yield_year_slope(crop_ids[:1]).item()),
+        },
+        "Soybean": {
+            "HI": float(model.crop_harvest_index(crop_ids[1:]).item()),
+            "yield_scale": float(model.crop_yield_scale(crop_ids[1:]).item()),
+            "yield_year_trend": float(model.crop_yield_year_slope(crop_ids[1:]).item()),
+        },
+    }
 
 
 def _stress_summary(model, traj, forcing):
@@ -153,23 +177,36 @@ def _group_residuals(sample_rows, group_key):
 
 
 def _spatial_residual_summary(sample_rows):
+    min_count = 3
     by_state = _group_residuals(sample_rows, "state")
     by_county = _group_residuals(sample_rows, "county")
+    by_county_n3 = [row for row in by_county if row["n"] >= min_count]
     state_rmse = np.array([row["rmse_bu_ac"] for row in by_state], dtype=float)
     state_bias = np.array([row["bias_bu_ac"] for row in by_state], dtype=float)
     county_rmse = np.array([row["rmse_bu_ac"] for row in by_county], dtype=float)
     county_bias = np.array([row["bias_bu_ac"] for row in by_county], dtype=float)
+    county_n3_rmse = np.array([row["rmse_bu_ac"] for row in by_county_n3], dtype=float)
+    county_n3_bias = np.array([row["bias_bu_ac"] for row in by_county_n3], dtype=float)
     return {
         "by_state": by_state,
         "by_county": by_county,
+        "county_reliable_min_count": min_count,
+        "county_reliable_group_count": len(by_county_n3),
         "macro_state_rmse_bu_ac": float(np.mean(state_rmse)) if state_rmse.size else float("nan"),
         "macro_county_rmse_bu_ac": float(np.mean(county_rmse)) if county_rmse.size else float("nan"),
+        "macro_county_rmse_n3_bu_ac": float(np.mean(county_n3_rmse)) if county_n3_rmse.size else float("nan"),
         "state_bias_std_bu_ac": float(np.std(state_bias)) if state_bias.size else float("nan"),
         "county_bias_std_bu_ac": float(np.std(county_bias)) if county_bias.size else float("nan"),
+        "county_bias_std_n3_bu_ac": float(np.std(county_n3_bias)) if county_n3_bias.size else float("nan"),
         "state_bias_range_bu_ac": float(np.max(state_bias) - np.min(state_bias)) if state_bias.size else float("nan"),
         "worst_states_by_rmse": by_state[:5],
         "worst_counties_by_abs_bias": sorted(
             by_county,
+            key=lambda row: row["abs_bias_bu_ac"],
+            reverse=True,
+        )[:20],
+        "worst_counties_n3_by_abs_bias": sorted(
+            by_county_n3,
             key=lambda row: row["abs_bias_bu_ac"],
             reverse=True,
         )[:20],
@@ -232,7 +269,7 @@ def evaluate(ckpt_path, data_path, device, save_legacy=True):
         idx = vds.indices[i]
         sample = ds[idx]
         ct = int(sample['static_features'][10].item())
-        label = {1: 'Corn', 5: 'Soy'}.get(ct, f'Other({ct})')
+        label = {1: 'Corn', 5: 'Soybean'}.get(ct, f'Other({ct})')
 
         if label not in groups:
             groups[label] = {'preds': [], 'tgts': []}
@@ -251,8 +288,9 @@ def evaluate(ckpt_path, data_path, device, save_legacy=True):
         model.set_static_features(static_f, state_id=state_id, county_id=county_id)
         traj, pred = model(forcing, n_init, year=year)
 
-        tgt_raw = sample['target_yield'].item() * CORN_T_HA_TO_BU_AC
-        pred_raw = pred.item() * CORN_T_HA_TO_BU_AC
+        bu_factor = t_ha_to_bu_ac_factor(ct)
+        tgt_raw = sample['target_yield'].item() * bu_factor
+        pred_raw = pred.item() * bu_factor
         pred_t_ha = pred.item()
         target_t_ha = sample["target_yield"].item()
         peak_lai_pred = traj[..., 0].amax().item()
@@ -363,6 +401,16 @@ def evaluate(ckpt_path, data_path, device, save_legacy=True):
         bias = np.mean(p - t)
         rmse = np.sqrt(np.mean((p - t) ** 2))
         print(f"  {label}: n={len(p)} RMSE={rmse:.1f} bu/ac bias={bias:+.1f} bu/ac")
+    crop_params = _crop_yield_parameter_summary(model)
+    print(
+        "  Crop yield params: "
+        f"Corn HI={crop_params['Corn']['HI']:.3f} "
+        f"YS={crop_params['Corn']['yield_scale']:.3f} "
+        f"YT={crop_params['Corn']['yield_year_trend']:.3f} | "
+        f"Soybean HI={crop_params['Soybean']['HI']:.3f} "
+        f"YS={crop_params['Soybean']['yield_scale']:.3f} "
+        f"YT={crop_params['Soybean']['yield_year_trend']:.3f}"
+    )
     if spatial_residuals["worst_states_by_rmse"]:
         worst = spatial_residuals["worst_states_by_rmse"][0]
         print(
@@ -371,6 +419,7 @@ def evaluate(ckpt_path, data_path, device, save_legacy=True):
             f"RMSE={worst['rmse_bu_ac']:.1f} "
             f"bias={worst['bias_bu_ac']:+.1f} bu/ac | "
             f"macro_state_RMSE={spatial_residuals['macro_state_rmse_bu_ac']:.1f} "
+            f"macro_county_RMSE_n3={spatial_residuals['macro_county_rmse_n3_bu_ac']:.1f} "
             f"state_bias_std={spatial_residuals['state_bias_std_bu_ac']:.1f}"
         )
 
@@ -392,7 +441,9 @@ def evaluate(ckpt_path, data_path, device, save_legacy=True):
         device,
         max_batches=3,
         print_results=bool(getattr(C, "EVAL_PRINT_FACTOR_TABLE", False) or verbose),
+        by_crop=True,
     )
+    factor_results_by_crop = factor_results.pop("_by_crop", {})
     factor_line = " ".join(
         f"{name}={vals.get('mean_response_pct', float('nan')):+.1f}%"
         for name, vals in factor_results.items()
@@ -431,8 +482,10 @@ def evaluate(ckpt_path, data_path, device, save_legacy=True):
             for label, g in groups.items()
         },
         'factor_responses': factor_results,
+        'factor_responses_by_crop': factor_results_by_crop,
         'county_adaptation': adaptation_summary,
         'window_stress': window_summary,
+        'crop_yield_parameters': _crop_yield_parameter_summary(model),
         'spatial_residuals': spatial_residuals,
         'params': {
             name: float(param.item())

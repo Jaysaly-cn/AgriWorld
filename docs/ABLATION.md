@@ -1,22 +1,23 @@
-# AgriWorld V3.27 Ablation Plan
+# AgriWorld V3.28 Ablation Plan
 
-V3.27 keeps the free yield residual head disabled by default and regularizes structured county-level crop parameters learned from static features.
+V3.28 keeps the free yield residual head disabled by default and makes structured county-level crop parameters bias-free, so learned factors must come from static features rather than a global output offset.
 
 - `static interaction gates`: small static-conditioned gates for water, nitrogen, VPD and heat responses.
 - `YieldResidualHead`: retained as an optional ablation mechanism, disabled in the mainline.
 - `StaticCropParameterHead`: static-feature adjustments for harvest index, yield scale and heat sensitivity.
 - `static adaptation regularization`: keeps county-level factors near the physical baseline unless data support deviations.
+- `bias-free adapter output`: prevents the structured county adapter from collapsing into a global correction.
 - `reproductive heat penalty`: flowering-to-maturity heat exposure reduces harvest index.
 
-Because ablation training is expensive, V3.27 defaults to a minimal ablation matrix.
+Because ablation training is expensive, V3.28 defaults to a minimal ablation matrix.
 The current mainline defaults use `USE_YIELD_RESIDUAL=0` and
 `USE_STATIC_CROP_PARAMS=1` with `W_STATIC_ADAPT=0.15`.
 
-## Minimal V3.27 Ablation Matrix
+## Minimal V3.28 Ablation Matrix
 
 | Variant | Purpose |
 |---|---|
-| `baseline` | V3.27 mainline: regularized static crop params + static interaction gates |
+| `baseline` | V3.28 mainline: bias-free regularized static crop params + static interaction gates |
 | `no_static_crop_params` | Tests whether structured county-level crop parameters help |
 | `no_static_adapt_reg` | Tests whether regularization prevents memorization |
 | `no_reproductive_heat_penalty` | Tests whether reproductive heat damage is necessary |
@@ -28,7 +29,7 @@ The current mainline defaults use `USE_YIELD_RESIDUAL=0` and
 The default `scripts/ablation.py` matrix is intentionally limited to these variants.
 New ablation summaries include `schema`, `model_version` and `description` columns.
 If `ablation_results.csv` still contains historical variants such as `lstm_res` or
-`no_year_trend`, treat it as a stale full-matrix result rather than the current V3.27
+`no_year_trend`, treat it as a stale full-matrix result rather than the current V3.28
 minimal ablation.
 
 ## Historical V3.23 Findings Kept As Prior Evidence
@@ -43,7 +44,7 @@ minimal ablation.
 
 These variants should not be rerun every iteration. Re-run them only for a final paper table or if a later structural change directly touches the corresponding mechanism.
 
-## V3.27 Success Criteria
+## V3.28 Success Criteria
 
 Primary metrics:
 

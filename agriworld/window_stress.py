@@ -1,4 +1,4 @@
-"""Interpretable corn growth-window stress factors."""
+"""Interpretable crop growth-window stress factors."""
 
 import torch
 import torch.nn as nn
@@ -15,17 +15,24 @@ def _logit(value):
     return torch.logit(torch.tensor(value))
 
 
-class CornWindowStressExpert(nn.Module):
+class CropWindowStressExpert(nn.Module):
     """Crop-window stress multiplier with visible agronomic components."""
 
     def __init__(self):
         super().__init__()
-        priors = torch.tensor([
+        corn = torch.tensor([
             [0.25, 0.10, 0.15, 0.45, 0.15, 0.20],  # establishment
             [0.30, 0.20, 0.20, 0.05, 0.25, 0.35],  # vegetative
             [0.55, 0.45, 0.55, 0.02, 0.45, 0.20],  # reproductive
             [0.35, 0.25, 0.25, 0.05, 0.50, 0.25],  # grain fill
         ])
+        soybean = torch.tensor([
+            [0.35, 0.10, 0.20, 0.35, 0.15, 0.25],  # emergence/nodulation
+            [0.35, 0.20, 0.20, 0.05, 0.25, 0.20],  # vegetative canopy/rooting
+            [0.65, 0.35, 0.35, 0.02, 0.35, 0.55],  # flowering/pod setting
+            [0.70, 0.30, 0.25, 0.03, 0.55, 0.60],  # seed fill
+        ])
+        priors = torch.stack([corn, soybean], dim=0)
         self.raw_sensitivity = nn.Parameter(torch.stack([
             _logit(v) for v in priors.flatten()
         ]).reshape_as(priors))
@@ -45,8 +52,8 @@ class CornWindowStressExpert(nn.Module):
         window_exposure = weighted_exposure.sum(dim=1) / (
             gates.sum(dim=1).unsqueeze(-1).clamp_min(1e-4)
         )
-        sensitivity = torch.sigmoid(self.raw_sensitivity)
-        contributions = window_exposure * sensitivity.unsqueeze(0)
+        sensitivity = self._crop_sensitivity(ode_func, forcing.device)
+        contributions = window_exposure * sensitivity
         window_stress = contributions.sum(dim=-1)
         stress_score = (
             window_stress.sum(dim=-1, keepdim=True) /
@@ -63,6 +70,15 @@ class CornWindowStressExpert(nn.Module):
             "sensitivity": sensitivity,
             "active_windows": active,
         }
+
+    def _crop_sensitivity(self, ode_func, device):
+        static = getattr(ode_func, "current_static_features", None)
+        base = torch.sigmoid(self.raw_sensitivity)
+        if static is None or static.shape[-1] <= 10:
+            return base[0:1]
+        crop = static[:, 10].round().long().to(device)
+        idx = torch.where(crop == 5, 1, 0)
+        return base[idx]
 
     def _stress_exposure(self, forcing, traj, ode_func):
         tmean = forcing[..., 3:4]
@@ -123,3 +139,6 @@ class CornWindowStressExpert(nn.Module):
             device=device,
             dtype=dtype,
         )
+
+
+CornWindowStressExpert = CropWindowStressExpert

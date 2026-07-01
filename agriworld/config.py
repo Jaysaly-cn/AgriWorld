@@ -1,9 +1,9 @@
 ﻿import os
 import torch
-from agriworld.paths import MERGED_DATA_PATH, PRETRAINED_DIR, SAVE_DIR
+from agriworld.paths import MULTICROP_DATA_PATH, PRETRAINED_DIR, SAVE_DIR
 
 SEED = 42
-MODEL_SCHEMA = "agriworld-v3.37"
+MODEL_SCHEMA = "agriworld-v3.39"
 
 # 鈹€鈹€ 妯″瀷鐗堟湰 (娑堣瀺瀹為獙) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 # 'baseline': 鍘熷 CouplingHead (MLP anomaly)
@@ -21,6 +21,7 @@ USE_VPD_STRESS = bool(int(os.getenv("AGRI_USE_VPD_STRESS", "1")))
 USE_NITROGEN_STRESS = bool(int(os.getenv("AGRI_USE_NITROGEN_STRESS", "1")))
 USE_TEMPERATURE_STRESS = bool(int(os.getenv("AGRI_USE_TEMPERATURE_STRESS", "1")))
 USE_YIELD_RESIDUAL = bool(int(os.getenv("AGRI_USE_YIELD_RESIDUAL", "0")))
+USE_CROP_CONDITIONED_YIELD = bool(int(os.getenv("AGRI_USE_CROP_CONDITIONED_YIELD", "1")))
 USE_STATIC_INTERACTION_GATES = bool(int(os.getenv("AGRI_USE_STATIC_INTERACTION_GATES", "1")))
 USE_STATIC_CROP_PARAMS = bool(int(os.getenv("AGRI_USE_STATIC_CROP_PARAMS", "1")))
 USE_REPRODUCTIVE_HEAT_PENALTY = bool(int(os.getenv("AGRI_USE_REPRODUCTIVE_HEAT_PENALTY", "1")))
@@ -78,7 +79,8 @@ WINDOW_STRESS_COLD_THRESHOLD_C = float(os.getenv("AGRI_WINDOW_STRESS_COLD_THRESH
 WINDOW_STRESS_TEMP_WIDTH_C = float(os.getenv("AGRI_WINDOW_STRESS_TEMP_WIDTH_C", "2.0"))
 WINDOW_STRESS_PAR_REFERENCE = float(os.getenv("AGRI_WINDOW_STRESS_PAR_REFERENCE", "20.0"))
 
-DATA_PATH = os.getenv("AGRI_DATA_PATH", MERGED_DATA_PATH)
+DATA_PATH = os.getenv("AGRI_DATA_PATH", MULTICROP_DATA_PATH)
+ALLOWED_CROPS = os.getenv("AGRI_ALLOWED_CROPS", "1,5")
 
 VAL_RATIO = 0.2
 SPLIT_MODE = os.getenv("AGRI_SPLIT_MODE", "auto")  # temporal, spatial_county, spatial_state, auto
@@ -115,6 +117,7 @@ W_PRIOR = 0.03
 W_CANOPY = 3.0
 W_WINDOW_STRESS = float(os.getenv("AGRI_W_WINDOW_STRESS", "0.08"))
 USE_SPATIAL_CONTRAST = bool(int(os.getenv("AGRI_USE_SPATIAL_CONTRAST", "1")))
+USE_CROP_AWARE_SPATIAL_LOSS = bool(int(os.getenv("AGRI_USE_CROP_AWARE_SPATIAL_LOSS", "1")))
 W_SPATIAL_CONTRAST = float(os.getenv("AGRI_W_SPATIAL_CONTRAST", "0.40"))
 SPATIAL_CONTRAST_MIN_GAP = float(os.getenv("AGRI_SPATIAL_CONTRAST_MIN_GAP", "0.15"))
 USE_SPATIAL_GROUP_BIAS = bool(int(os.getenv("AGRI_USE_SPATIAL_GROUP_BIAS", "1")))

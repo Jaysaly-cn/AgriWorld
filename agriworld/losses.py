@@ -49,9 +49,14 @@ def compute_spatial_contrast_loss(
     pred_yield,
     tgt_yield,
     county_id=None,
+    crop_id=None,
     min_gap=0.15,
 ):
-    """Pairwise county contrast in log-yield space."""
+    """Pairwise county contrast in log-yield space.
+
+    In multi-crop training, pairwise ranking is only meaningful within the
+    same crop because corn and soybean occupy different yield scales.
+    """
     if pred_yield.numel() < 2:
         return pred_yield.new_tensor(0.0)
     lp = torch.log(pred_yield.clamp(min=1e-6)).view(-1)
@@ -62,6 +67,9 @@ def compute_spatial_contrast_loss(
     if county_id is not None:
         cid = county_id.view(-1)
         mask = mask & (cid[:, None] != cid[None, :])
+    if crop_id is not None:
+        crop = crop_id.view(-1)
+        mask = mask & (crop[:, None] == crop[None, :])
     if min_gap > 0:
         mask = mask & ((tgt_yield.view(-1, 1) - tgt_yield.view(1, -1)).abs() >= min_gap)
     if not mask.any():
@@ -73,8 +81,18 @@ def compute_spatial_contrast_loss(
     )
 
 
-def compute_group_bias_loss(pred_yield, tgt_yield, group_id=None, min_count=4):
-    """Penalize systematic regional mean bias in log-yield space."""
+def compute_group_bias_loss(
+    pred_yield,
+    tgt_yield,
+    group_id=None,
+    crop_id=None,
+    min_count=4,
+):
+    """Penalize systematic regional mean bias in log-yield space.
+
+    When crop_id is provided, groups become region-crop cells. This prevents
+    the regional bias term from mixing corn and soybean baselines.
+    """
     if group_id is None or pred_yield.numel() < min_count:
         return pred_yield.new_tensor(0.0)
     residual = (
@@ -82,6 +100,8 @@ def compute_group_bias_loss(pred_yield, tgt_yield, group_id=None, min_count=4):
         torch.log(tgt_yield.clamp(min=1e-6)).view(-1)
     )
     group = group_id.view(-1)
+    if crop_id is not None:
+        group = group.long() * 512 + crop_id.view(-1).long()
     terms = []
     for gid in torch.unique(group):
         mask = group == gid

@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from torchdiffeq import odeint
 from agriworld.ode import CompositeODE
-from agriworld.window_stress import CornWindowStressExpert
+from agriworld.window_stress import CropWindowStressExpert
 import agriworld.config as config
 
 
@@ -54,11 +54,13 @@ class StaticCropParameterHead(nn.Module):
         self,
         static_dim=11,
         hidden=24,
+        crop_embed_dim=4,
         state_embed_dim=4,
         county_embed_dim=8,
     ):
         super().__init__()
-        self.input_dim = static_dim - 1  # drop crop_type; current training data is all corn
+        self.input_dim = static_dim - 1
+        self.crop_embed = nn.Embedding(256, crop_embed_dim)
         self.state_embed = nn.Embedding(
             int(getattr(config, "STATE_EMBED_BUCKETS", 32)),
             state_embed_dim,
@@ -67,7 +69,7 @@ class StaticCropParameterHead(nn.Module):
             int(getattr(config, "COUNTY_EMBED_BUCKETS", 4096)),
             county_embed_dim,
         )
-        total_dim = self.input_dim + state_embed_dim + county_embed_dim
+        total_dim = self.input_dim + crop_embed_dim + state_embed_dim + county_embed_dim
         self.static_norm = nn.LayerNorm(self.input_dim)
         self.context_norm = nn.LayerNorm(total_dim)
         self.net = nn.Sequential(
@@ -77,6 +79,7 @@ class StaticCropParameterHead(nn.Module):
         )
         nn.init.normal_(self.state_embed.weight, mean=0.0, std=0.08)
         nn.init.normal_(self.county_embed.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.crop_embed.weight, mean=0.0, std=0.04)
         nn.init.normal_(self.net[-1].weight, mean=0.0, std=0.02)
 
     def forward(
@@ -89,6 +92,7 @@ class StaticCropParameterHead(nn.Module):
         heat_sens_max=0.50,
     ):
         x = torch.nan_to_num(static_features.float(), nan=0.0)
+        crop_id = x[:, 10].round().long().clamp(0, self.crop_embed.num_embeddings - 1)
         x = x[..., :self.input_dim]
         batch = x.shape[0]
         dev = x.device
@@ -114,7 +118,7 @@ class StaticCropParameterHead(nn.Module):
                 batch, self.county_embed.embedding_dim, device=dev
             )
         context = torch.cat(
-            [self.static_norm(x), state_context, county_context],
+            [self.static_norm(x), self.crop_embed(crop_id), state_context, county_context],
             dim=-1,
         )
         raw = torch.tanh(self.net(self.context_norm(context)))
@@ -128,26 +132,29 @@ class AgriWorldSimulator(nn.Module):
     def __init__(self):
         super().__init__()
         self.ode_func = CompositeODE()
-        self.hi_raw = nn.Parameter(_bounded_inverse(
+        hi_init = _bounded_inverse(
             getattr(config, "INITIAL_HARVEST_INDEX", 0.52),
             0.3,
             0.65,
-        ))
+        ).item()
+        self.hi_raw = nn.Parameter(torch.full((256,), hi_init))
         # Raw value maps to a bounded grain conversion correction in [0.5, 2].
-        self.log_yield_scale = nn.Parameter(_bounded_inverse(
+        ys_init = _bounded_inverse(
             getattr(config, "INITIAL_YIELD_SCALE", 1.20),
             0.5,
             2.0,
-        ))
-        self.yield_year_slope_raw = nn.Parameter(_atanh_inverse(
+        ).item()
+        self.log_yield_scale = nn.Parameter(torch.full((256,), ys_init))
+        yt_init = _atanh_inverse(
             getattr(config, "INITIAL_YIELD_YEAR_TREND_LOG", 0.0),
             0.12,
-        ))
+        ).item()
+        self.yield_year_slope_raw = nn.Parameter(torch.full((256,), yt_init))
 
         self.hi_width = nn.Parameter(torch.tensor(200.0))
         self.yield_residual = YieldResidualHead()
         self.static_crop_params = StaticCropParameterHead()
-        self.window_stress = CornWindowStressExpert()
+        self.window_stress = CropWindowStressExpert()
         self.last_window_stress = None
         self.current_static_features = None
         self.current_state_id = None
@@ -155,15 +162,55 @@ class AgriWorldSimulator(nn.Module):
 
     @property
     def harvest_index(self):
-        return 0.3 + 0.35 * torch.sigmoid(self.hi_raw)
+        return self.crop_harvest_index(self._summary_crop_ids()).mean()
 
     @property
     def yield_scale(self):
-        return 0.5 + 1.5 * torch.sigmoid(self.log_yield_scale)
+        return self.crop_yield_scale(self._summary_crop_ids()).mean()
 
     @property
     def yield_year_slope(self):
-        return 0.12 * torch.tanh(self.yield_year_slope_raw)
+        return self.crop_yield_year_slope(self._summary_crop_ids()).mean()
+
+    def _summary_crop_ids(self):
+        raw = str(getattr(config, "ALLOWED_CROPS", "1,5"))
+        ids = []
+        for item in raw.split(","):
+            item = item.strip()
+            if item:
+                ids.append(int(item))
+        if not ids:
+            ids = [1]
+        return torch.tensor(ids, device=self.hi_raw.device, dtype=torch.long)
+
+    def _current_crop_ids(self, batch, device):
+        if (
+            self.current_static_features is not None and
+            self.current_static_features.shape[0] == batch and
+            self.current_static_features.shape[1] > 10
+        ):
+            crop = self.current_static_features[:, 10].round().long().to(device)
+        else:
+            crop = torch.ones(batch, dtype=torch.long, device=device)
+        return crop.clamp(0, self.hi_raw.numel() - 1)
+
+    def _yield_crop_index(self, crop_id, parameter):
+        crop_id = crop_id.to(parameter.device).long().clamp(0, parameter.numel() - 1)
+        if not getattr(config, "USE_CROP_CONDITIONED_YIELD", True):
+            crop_id = torch.ones_like(crop_id)
+        return crop_id
+
+    def crop_harvest_index(self, crop_id):
+        crop_id = self._yield_crop_index(crop_id, self.hi_raw)
+        return 0.3 + 0.35 * torch.sigmoid(self.hi_raw[crop_id])
+
+    def crop_yield_scale(self, crop_id):
+        crop_id = self._yield_crop_index(crop_id, self.log_yield_scale)
+        return 0.5 + 1.5 * torch.sigmoid(self.log_yield_scale[crop_id])
+
+    def crop_yield_year_slope(self, crop_id):
+        crop_id = self._yield_crop_index(crop_id, self.yield_year_slope_raw)
+        return 0.12 * torch.tanh(self.yield_year_slope_raw[crop_id])
 
     @property
     def gdd_flowering(self):
@@ -297,6 +344,7 @@ class AgriWorldSimulator(nn.Module):
         """
         B, T, _ = forcing.shape
         dev = forcing.device
+        crop_id = self._current_crop_ids(B, dev)
 
         # 璁剧疆骞翠唤
         self.ode_func.current_year = year
@@ -357,7 +405,7 @@ class AgriWorldSimulator(nn.Module):
 
         # 鈹€鈹€ HI 鍔ㄦ€佸寲: Sigmoid(GDD - GDD_flowering) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         gdd_final = gdd_cum_full[:, -1:]  # [B, 1]
-        hi_dynamic = self.harvest_index * torch.sigmoid(
+        hi_dynamic = self.crop_harvest_index(crop_id).view(B, 1) * torch.sigmoid(
             (gdd_final - gdd_flowering) / torch.abs(self.hi_width)
         )
 
@@ -385,7 +433,7 @@ class AgriWorldSimulator(nn.Module):
                 float(getattr(config, "YIELD_TREND_CENTER_YEAR", 2021.0))
             )
             year_effect = torch.exp(torch.clamp(
-                self.yield_year_slope * year_delta,
+                self.crop_yield_year_slope(crop_id).view(B, 1) * year_delta,
                 min=-0.35,
                 max=0.35,
             ))
@@ -393,7 +441,7 @@ class AgriWorldSimulator(nn.Module):
             year_effect = 1.0
 
         physical_yield = (
-            self.yield_scale *
+            self.crop_yield_scale(crop_id).view(B, 1) *
             year_effect *
             county_yield_factor *
             final_bio *

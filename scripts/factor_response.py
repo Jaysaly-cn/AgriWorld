@@ -43,8 +43,51 @@ def _crop_progress(model, forcing):
     return torch.clamp((gdd_cum - gdd_em) / (gdd_ma - gdd_em + 1e-6), 0.0, 1.0)
 
 
+def _summarize_factor_values(values, expected_direction, eps, context_warn_abs=None):
+    mean = values.mean().item()
+    median = values.median().item()
+    q25 = torch.quantile(values, 0.25).item()
+    q75 = torch.quantile(values, 0.75).item()
+    if expected_direction == "positive":
+        active_fraction = (values >= eps).float().mean().item() * 100.0
+        median_pass = median >= eps
+        status = "PASS" if mean >= eps and median_pass else (
+            "PARTIAL" if mean >= eps else "WARN"
+        )
+    elif expected_direction == "negative":
+        active_fraction = (values <= -eps).float().mean().item() * 100.0
+        median_pass = median <= -eps
+        status = "PASS" if mean <= -eps and median_pass else (
+            "PARTIAL" if mean <= -eps else "WARN"
+        )
+    else:
+        status = (
+            "WARN"
+            if context_warn_abs is not None and abs(mean) > context_warn_abs
+            else "INFO"
+        )
+        active_fraction = (values.abs() >= eps).float().mean().item() * 100.0
+    return {
+        "mean_response_pct": mean,
+        "median_response_pct": median,
+        "q25_response_pct": q25,
+        "q75_response_pct": q75,
+        "active_fraction_pct": active_fraction,
+        "expected": expected_direction,
+        "status": status,
+        "epsilon_pct": eps,
+    }
+
+
 @torch.no_grad()
-def audit_factor_responses(model, dataloader, device, max_batches=3, print_results=True):
+def audit_factor_responses(
+    model,
+    dataloader,
+    device,
+    max_batches=3,
+    print_results=True,
+    by_crop=False,
+):
     """Report mean yield response to controlled one-factor perturbations."""
     model.eval()
     accum = {
@@ -59,12 +102,17 @@ def audit_factor_responses(model, dataloader, device, max_batches=3, print_resul
         "window_radiation": [],
         "window_water": [],
     }
+    crop_accum = {
+        "Corn": {name: [] for name in accum},
+        "Soybean": {name: [] for name in accum},
+    }
 
     for batch_idx, batch in enumerate(dataloader):
         if batch_idx >= max_batches:
             break
         forcing = batch["forcing"].to(device)
         n_init = batch["n_init"].to(device)
+        crop_id = batch["static_features"][:, 10].round().long()
         baseline = _predict(model, batch, device, forcing, n_init).clamp(min=1e-4)
 
         perturbations = {}
@@ -177,6 +225,12 @@ def audit_factor_responses(model, dataloader, device, max_batches=3, print_resul
         for name, (low_pred, high_pred) in perturbations.items():
             response_pct = 100.0 * (high_pred - low_pred) / baseline
             accum[name].append(response_pct.cpu())
+            if by_crop:
+                cpu_response = response_pct.detach().cpu()
+                for crop_value, crop_label in [(1, "Corn"), (5, "Soybean")]:
+                    mask = crop_id.cpu() == crop_value
+                    if mask.any():
+                        crop_accum[crop_label][name].append(cpu_response[mask])
 
     results = {}
     expected = {
@@ -212,55 +266,53 @@ def audit_factor_responses(model, dataloader, device, max_batches=3, print_resul
     for name, chunks in accum.items():
         if not chunks:
             continue
-        values = torch.cat(chunks)
-        mean = values.mean().item()
-        median = values.median().item()
-        q25 = torch.quantile(values, 0.25).item()
-        q75 = torch.quantile(values, 0.75).item()
         expected_direction = expected[name]
-        if expected_direction == "positive":
-            active_fraction = (values >= eps).float().mean().item() * 100.0
-            median_pass = median >= eps
-            status = "PASS" if mean >= eps and median_pass else (
-                "PARTIAL" if mean >= eps else "WARN"
-            )
-        elif expected_direction == "negative":
-            active_fraction = (values <= -eps).float().mean().item() * 100.0
-            median_pass = median <= -eps
-            status = "PASS" if mean <= -eps and median_pass else (
-                "PARTIAL" if mean <= -eps else "WARN"
-            )
-        else:
-            warn_abs = context_warn_abs.get(name)
-            status = (
-                "WARN"
-                if warn_abs is not None and abs(mean) > warn_abs
-                else "INFO"
-            )
-            active_fraction = (values.abs() >= eps).float().mean().item() * 100.0
+        values = torch.cat(chunks)
+        stats = _summarize_factor_values(
+            values,
+            expected_direction,
+            eps,
+            context_warn_abs.get(name),
+        )
         if print_results:
             print(
-                f"  {status:4s} | {name:14s} high-minus-low yield response: "
-                f"mean={mean:+7.2f}% median={median:+7.2f}% "
-                f"active={active_fraction:5.1f}%"
+                f"  {stats['status']:4s} | {name:14s} high-minus-low yield response: "
+                f"mean={stats['mean_response_pct']:+7.2f}% "
+                f"median={stats['median_response_pct']:+7.2f}% "
+                f"active={stats['active_fraction_pct']:5.1f}%"
             )
-        results[name] = {
-            "mean_response_pct": mean,
-            "median_response_pct": median,
-            "q25_response_pct": q25,
-            "q75_response_pct": q75,
-            "active_fraction_pct": active_fraction,
-            "expected": expected_direction,
-            "status": status,
-            "epsilon_pct": eps,
-            "heat_audit_hot_day_c": hot_day_c if name == "heat_extreme" else None,
-            "heat_audit_delta_c": heat_delta_c if name in {"heat_extreme", "window_heat"} else None,
-        }
+        stats["heat_audit_hot_day_c"] = hot_day_c if name == "heat_extreme" else None
+        stats["heat_audit_delta_c"] = heat_delta_c if name in {"heat_extreme", "window_heat"} else None
+        results[name] = stats
+    if by_crop:
+        by_crop_results = {}
+        for crop_label, crop_factors in crop_accum.items():
+            by_crop_results[crop_label] = {}
+            for name, chunks in crop_factors.items():
+                if not chunks:
+                    continue
+                expected_direction = expected[name]
+                values = torch.cat(chunks)
+                stats = _summarize_factor_values(
+                    values,
+                    expected_direction,
+                    eps,
+                    context_warn_abs.get(name),
+                )
+                stats["heat_audit_hot_day_c"] = hot_day_c if name == "heat_extreme" else None
+                stats["heat_audit_delta_c"] = heat_delta_c if name in {"heat_extreme", "window_heat"} else None
+                by_crop_results[crop_label][name] = stats
+        results["_by_crop"] = by_crop_results
     return results
 
 
 def save_factor_results(results, prefix="factor_response"):
     os.makedirs(RESULTS_DIR, exist_ok=True)
+    by_crop = results.get("_by_crop", {})
+    flat_results = {
+        factor: values for factor, values in results.items()
+        if not factor.startswith("_")
+    }
     json_path = os.path.join(RESULTS_DIR, f"{prefix}.json")
     csv_path = os.path.join(RESULTS_DIR, f"{prefix}.csv")
     with open(json_path, "w", encoding="utf-8") as f:
@@ -283,10 +335,39 @@ def save_factor_results(results, prefix="factor_response"):
             ],
         )
         writer.writeheader()
-        for factor, values in results.items():
+        for factor, values in flat_results.items():
             writer.writerow({"factor": factor, **values})
     print(f"  Factor response JSON saved to {json_path}")
     print(f"  Factor response CSV saved to {csv_path}")
+    if by_crop:
+        by_crop_json = os.path.join(RESULTS_DIR, f"{prefix}_by_crop.json")
+        by_crop_csv = os.path.join(RESULTS_DIR, f"{prefix}_by_crop.csv")
+        with open(by_crop_json, "w", encoding="utf-8") as f:
+            json.dump(by_crop, f, indent=2)
+        with open(by_crop_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "crop",
+                    "factor",
+                    "status",
+                    "expected",
+                    "mean_response_pct",
+                    "median_response_pct",
+                    "q25_response_pct",
+                    "q75_response_pct",
+                    "active_fraction_pct",
+                    "epsilon_pct",
+                    "heat_audit_hot_day_c",
+                    "heat_audit_delta_c",
+                ],
+            )
+            writer.writeheader()
+            for crop, crop_results in by_crop.items():
+                for factor, values in crop_results.items():
+                    writer.writerow({"crop": crop, "factor": factor, **values})
+        print(f"  Per-crop factor response JSON saved to {by_crop_json}")
+        print(f"  Per-crop factor response CSV saved to {by_crop_csv}")
 
 
 def main():
@@ -310,7 +391,9 @@ def main():
         ds, C.VAL_RATIO, C.SEED, getattr(C, "SPLIT_MODE", "temporal")
     )
     loader = DataLoader(vds, batch_size=C.BATCH_VAL, shuffle=False)
-    results = audit_factor_responses(model, loader, C.DEVICE, args.batches)
+    results = audit_factor_responses(
+        model, loader, C.DEVICE, args.batches, by_crop=True
+    )
     save_factor_results(results, args.out_prefix)
 
 

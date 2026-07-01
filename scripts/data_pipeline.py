@@ -1,7 +1,6 @@
 ﻿import os
 import ssl
 import json
-import requests
 from agriworld.data_quality import forcing_quality_issue
 import pickle
 import pandas as pd
@@ -13,6 +12,12 @@ from shapely.geometry import Polygon
 import urllib3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+from agriworld.nass import (
+    CROP_YIELD_SPECS,
+    fetch_nass_yield,
+    make_yield_key,
+    parse_crop_codes,
+)
 from agriworld.paths import CACHE_ROOT, DATA_ROOT, GEE_CREDENTIALS_PATH, PROXY_URL
 
 os.environ['HTTP_PROXY'] = PROXY_URL
@@ -22,11 +27,11 @@ os.environ['https_proxy'] = PROXY_URL
 ssl._create_default_https_context = ssl._create_unverified_context
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-API_KEY = os.getenv("USDA_NASS_API_KEY", "4A195BB4-78C3-36BB-A640-4D3378D21432")
 MAX_WORKERS = int(os.getenv("AGRI_GEE_WORKERS", "4"))
 MAX_WORKERS_SMAP = int(os.getenv("AGRI_SMAP_WORKERS", "4"))
 MAX_RETRIES = 4
 MIN_WEATHER_COVERAGE = 0.95
+NASS_CROP_CODES = parse_crop_codes(os.getenv("AGRI_NASS_CROPS", "1,5"))
 
 
 class StageProgress:
@@ -112,36 +117,18 @@ class AgriWorldDataPipeline:
             credentials_path, scopes=scopes)
         ee.Initialize(credentials=credentials, project=project_id)
 
-    def fetch_usda_nass_yield(self, year=None):
+    def fetch_usda_nass_yield(self, year=None, crop_code=1):
         year = year or self.year
-        print(f"[NASS] Fetching county-level corn yield for {year}...")
-        base_url = "http://quickstats.nass.usda.gov/api/api_GET/"
-        all_yields = {}
-        for state in self.arms_n_rates.keys():
-            params = {
-                'key': API_KEY,
-                'short_desc': 'CORN, GRAIN - YIELD, MEASURED IN BU / ACRE',
-                'agg_level_desc': 'COUNTY',
-                'state_alpha': state,
-                'year': year,
-                'format': 'JSON'
-            }
-            try:
-                resp = requests.get(base_url, params=params, verify=False, timeout=30)
-                if resp.status_code == 200:
-                    for item in resp.json().get('data', []):
-                        county = item.get('county_name', '').upper()
-                        try:
-                            yv = float(item.get('Value', 0).replace(',', ''))
-                            all_yields[f"{state}-{county}"] = yv
-                        except ValueError:
-                            continue
-                else:
-                    print(f"  API refused {state}: HTTP {resp.status_code}")
-            except Exception as e:
-                print(f"  {state} error: {e}")
-        print(f"  Retrieved {len(all_yields)} county yields")
-        return all_yields
+        return fetch_nass_yield(year, self.arms_n_rates.keys(), crop_code)
+
+    def fetch_usda_nass_yields(self, year=None, crop_codes=None):
+        year = year or self.year
+        crop_codes = NASS_CROP_CODES if crop_codes is None else parse_crop_codes(crop_codes)
+        return {
+            int(crop): self.fetch_usda_nass_yield(year=year, crop_code=int(crop))
+            for crop in crop_codes
+            if int(crop) in CROP_YIELD_SPECS
+        }
 
     def generate_grids(self, yield_map):
         print("[GRID] Generating county centroid grids...")
@@ -158,7 +145,7 @@ class AgriWorldDataPipeline:
             if not state_alpha:
                 continue
             county_name = props['NAME'].upper()
-            yield_key = f"{state_alpha}-{county_name}"
+            yield_key = make_yield_key(state_alpha, county_name)
             if yield_key not in yield_map:
                 continue
             lon = float(props['INTPTLON'])
@@ -599,10 +586,13 @@ class AgriWorldDataPipeline:
         return static_df
 
     def compile(self):
-        yield_map = self.fetch_usda_nass_yield()
-        if not yield_map:
+        yield_maps = self.fetch_usda_nass_yields()
+        if not yield_maps:
             raise ValueError("USDA NASS returned no yield data")
-        grid_gdf = self.generate_grids(yield_map)
+        grid_yield_map = {}
+        for crop_map in yield_maps.values():
+            grid_yield_map.update(crop_map)
+        grid_gdf = self.generate_grids(grid_yield_map)
         unique_mtrs = grid_gdf['MTRS'].unique()
 
         base_records = []
@@ -654,10 +644,7 @@ class AgriWorldDataPipeline:
 
             state_alpha = mtrs.split('-')[0]
             county_name = mtrs.split('-')[1]
-            yield_key = f"{state_alpha}-{county_name}"
-            if yield_key not in yield_map:
-                skipped += 1
-                continue
+            yield_key = make_yield_key(state_alpha, county_name)
 
             observed_weather_days = int(group["Tmean"].notna().sum())
             if observed_weather_days < int(0.90 * self.expected_days):
@@ -696,6 +683,11 @@ class AgriWorldDataPipeline:
                                        'SOC', 'Clay_Fraction', 'Sand_Fraction',
                                        'Total_Nitrogen', 'pH']].iloc[0].values.astype(np.float32)
             crop_type = static_row['Crop_Type'].iloc[0] if 'Crop_Type' in static_row.columns else 1
+            crop_code = int(round(float(crop_type)))
+            crop_yield_map = yield_maps.get(crop_code, {})
+            if yield_key not in crop_yield_map:
+                skipped += 1
+                continue
             full_static = np.append(static_base, [n_rate, float(crop_type)]).astype(np.float32)
 
             gdd_vals = group['GDD'].values
@@ -711,14 +703,20 @@ class AgriWorldDataPipeline:
                 "static_features": full_static,
                 "obs_LAI": group['LAI'].fillna(0.0).values.astype(np.float32),
                 "mask_LAI": group['LAI_mask'].values.astype(np.float32),
-                "target_yield": float(yield_map[yield_key]),
+                "target_yield": float(crop_yield_map[yield_key]),
                 "val_smap_surface": group['sm_surface'].values.astype(np.float32),
                 "val_smap_rootzone": group['sm_rootzone'].values.astype(np.float32),
                 "GDD_cumsum": group['GDD_cumsum'].values.astype(np.float32),
                 "meta": {
                     "state": state_alpha, "county": county_name,
                     "lat": float(grid_info['Lat']), "lon": float(grid_info['Lon']),
-                    "crop_type": int(crop_type), "planting_doy": planting,
+                    "crop_type": crop_code,
+                    "yield_crop_type": crop_code,
+                    "yield_crop_name": CROP_YIELD_SPECS[crop_code]["name"],
+                    "yield_source": "USDA NASS QuickStats county yield",
+                    "yield_unit": "bu/acre",
+                    "bushel_lb": CROP_YIELD_SPECS[crop_code]["bushel_lb"],
+                    "planting_doy": planting,
                 }
             }
 

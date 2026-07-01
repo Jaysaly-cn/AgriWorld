@@ -14,12 +14,20 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 from agriworld.log_utils import tee_stdout
-from agriworld.paths import MERGED_DATA_PATH, RESULTS_DIR, SAVE_DIR
+from agriworld.paths import MULTICROP_DATA_PATH, RESULTS_DIR, SAVE_DIR
+
+
+DEFAULT_VARIANTS = [
+    "no_crop_conditioned_yield",
+    "no_crop_aware_spatial_loss",
+    "no_window_stress",
+    "no_spatial_group_bias",
+]
 
 
 VARIANTS = {
     "baseline": {
-        "desc": "V3.35 mainline: spatial contrast + state adaptation + corn window stress",
+        "desc": "V3.37 mainline: spatial contrast + state bias + corn window stress",
         "model_version": "phys_spatial",
         "use_lstm_residual": False,
         "overrides": {},
@@ -29,6 +37,18 @@ VARIANTS = {
         "model_version": "no_window_stress",
         "use_lstm_residual": False,
         "overrides": {"USE_WINDOW_STRESS": False},
+    },
+    "no_crop_conditioned_yield": {
+        "desc": "Share HI/yield-scale/year-trend across crops",
+        "model_version": "no_crop_conditioned_yield",
+        "use_lstm_residual": False,
+        "overrides": {"USE_CROP_CONDITIONED_YIELD": False},
+    },
+    "no_crop_aware_spatial_loss": {
+        "desc": "Compute spatial contrast/group-bias losses across crop types",
+        "model_version": "no_crop_aware_spatial_loss",
+        "use_lstm_residual": False,
+        "overrides": {"USE_CROP_AWARE_SPATIAL_LOSS": False},
     },
     "reproductive_only_window_stress": {
         "desc": "Use only the reproductive crop-window stress factor",
@@ -115,12 +135,14 @@ DEFAULT_OVERRIDES = {
     "USE_NITROGEN_STRESS": True,
     "USE_TEMPERATURE_STRESS": True,
     "USE_YIELD_RESIDUAL": False,
+    "USE_CROP_CONDITIONED_YIELD": True,
     "USE_STATIC_INTERACTION_GATES": True,
     "USE_STATIC_CROP_PARAMS": True,
     "USE_SPATIAL_EMBEDDINGS": False,
     "USE_STATE_EMBEDDINGS": True,
     "USE_COUNTY_EMBEDDINGS": False,
     "USE_SPATIAL_CONTRAST": True,
+    "USE_CROP_AWARE_SPATIAL_LOSS": True,
     "USE_SPATIAL_GROUP_BIAS": True,
     "USE_REPRODUCTIVE_HEAT_PENALTY": True,
     "USE_WINDOW_STRESS": True,
@@ -153,6 +175,82 @@ DEFAULT_OVERRIDES = {
     "WINDOW_STRESS_PAR_REFERENCE": 20.0,
     "W_WINDOW_STRESS": 0.08,
 }
+
+
+def _num(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_mainline_summary():
+    name = "eval_agriworld_phys_spatial_best.json"
+    candidates = [
+        os.path.join(PROJECT_ROOT, "results", name),
+        os.path.join(RESULTS_DIR, name),
+    ]
+    path = next((p for p in candidates if os.path.exists(p)), None)
+    if path is None:
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _delta(value, base):
+    value = _num(value)
+    base = _num(base)
+    if value is None or base is None:
+        return None
+    return value - base
+
+
+def _fmt_delta(delta, key):
+    value = delta.get(key)
+    return "NA" if value is None else f"{value:+.2f}"
+
+
+def _add_mainline_delta(result):
+    base = _load_mainline_summary()
+    if not base or result.get("model_version") == "phys_spatial":
+        return
+
+    y = result.get("yield_all") or {}
+    by = base.get("yield_all") or {}
+    s = result.get("spatial_residuals") or {}
+    bs = base.get("spatial_residuals") or {}
+    result["delta_vs_mainline"] = {
+        "rmse_bu_acre": _delta(
+            y.get("rmse_bu_acre", y.get("rmse")),
+            by.get("rmse_bu_acre", by.get("rmse")),
+        ),
+        "nrmse_pct": _delta(y.get("nrmse_pct"), by.get("nrmse_pct")),
+        "r2": _delta(y.get("r2"), by.get("r2")),
+        "macro_state_rmse_bu_ac": _delta(
+            s.get("macro_state_rmse_bu_ac"),
+            bs.get("macro_state_rmse_bu_ac"),
+        ),
+        "macro_county_rmse_bu_ac": _delta(
+            s.get("macro_county_rmse_bu_ac"),
+            bs.get("macro_county_rmse_bu_ac"),
+        ),
+        "macro_county_rmse_n3_bu_ac": _delta(
+            s.get("macro_county_rmse_n3_bu_ac"),
+            bs.get("macro_county_rmse_n3_bu_ac"),
+        ),
+        "state_bias_std_bu_ac": _delta(
+            s.get("state_bias_std_bu_ac"),
+            bs.get("state_bias_std_bu_ac"),
+        ),
+        "county_bias_std_n3_bu_ac": _delta(
+            s.get("county_bias_std_n3_bu_ac"),
+            bs.get("county_bias_std_n3_bu_ac"),
+        ),
+        "state_bias_range_bu_ac": _delta(
+            s.get("state_bias_range_bu_ac"),
+            bs.get("state_bias_range_bu_ac"),
+        ),
+    }
 
 
 def _evaluate_variant(evaluate, ckpt, data_path, device):
@@ -234,7 +332,9 @@ def run_variant(name: str, variant_config: dict, data_path: str, epochs: int):
         "yield_all": summary.get("yield_all", {}),
         "yield_per_crop": summary.get("yield_per_crop", {}),
         "factor_responses": summary.get("factor_responses", {}),
+        "spatial_residuals": summary.get("spatial_residuals", {}),
     })
+    _add_mainline_delta(result)
     yield_all = result["yield_all"]
     if yield_all:
         print(
@@ -242,17 +342,27 @@ def run_variant(name: str, variant_config: dict, data_path: str, epochs: int):
             f"bu/ac NRMSE={yield_all.get('nrmse_pct', float('nan')):.2f}% "
             f"R2={yield_all.get('r2', float('nan')):.3f}"
         )
+        delta = result.get("delta_vs_mainline") or {}
+        if delta:
+            print(
+                f"  vs mainline: dRMSE={_fmt_delta(delta, 'rmse_bu_acre')} "
+                f"dStateRMSE={_fmt_delta(delta, 'macro_state_rmse_bu_ac')} "
+                f"dCountyRMSE={_fmt_delta(delta, 'macro_county_rmse_bu_ac')} "
+                f"dCountyN3={_fmt_delta(delta, 'macro_county_rmse_n3_bu_ac')}"
+            )
     print(f"  Logs: train={train_log} | eval={eval_log}")
     return result
 
 
-def run_all(data_path: str, epochs: int = 100):
+def run_all(data_path: str, epochs: int = 100, variants=None):
     import agriworld.config as C
 
+    active_variants = variants or DEFAULT_VARIANTS
     print(f"  Schema: {getattr(C, 'MODEL_SCHEMA', 'unknown')}")
-    print(f"  Active ablation variants: {', '.join(VARIANTS.keys())}")
+    print(f"  Active ablation variants: {', '.join(active_variants)}")
     results = {}
-    for name, variant_config in VARIANTS.items():
+    for name in active_variants:
+        variant_config = VARIANTS[name]
         t0 = time.time()
         try:
             variant_result = run_variant(name, variant_config, data_path, epochs)
@@ -302,6 +412,27 @@ def write_results_csv(results, csv_path):
         "r2",
         "corn_rmse",
         "corn_mape_pct",
+        "soybean_rmse",
+        "soybean_mape_pct",
+        "macro_state_rmse_bu_ac",
+        "macro_county_rmse_bu_ac",
+        "macro_county_rmse_n3_bu_ac",
+        "county_reliable_group_count",
+        "state_bias_std_bu_ac",
+        "state_bias_range_bu_ac",
+        "county_bias_std_n3_bu_ac",
+        "delta_rmse_bu_acre",
+        "delta_nrmse_pct",
+        "delta_r2",
+        "delta_macro_state_rmse_bu_ac",
+        "delta_macro_county_rmse_bu_ac",
+        "delta_macro_county_rmse_n3_bu_ac",
+        "delta_state_bias_std_bu_ac",
+        "delta_county_bias_std_n3_bu_ac",
+        "delta_state_bias_range_bu_ac",
+        "worst_state",
+        "worst_state_bias_bu_ac",
+        "worst_state_rmse_bu_ac",
         "precipitation_pct",
         "radiation_pct",
         "vpd_pct",
@@ -320,7 +451,12 @@ def write_results_csv(results, csv_path):
         for variant, result in results.items():
             yield_all = result.get("yield_all") or {}
             corn = (result.get("yield_per_crop") or {}).get("Corn", {})
+            soybean = (result.get("yield_per_crop") or {}).get("Soybean", {})
             factors = result.get("factor_responses") or {}
+            spatial = result.get("spatial_residuals") or {}
+            delta = result.get("delta_vs_mainline") or {}
+            worst_states = spatial.get("worst_states_by_rmse") or []
+            worst_state = worst_states[0] if worst_states else {}
             row = {
                 "variant": variant,
                 "status": result.get("status"),
@@ -332,6 +468,27 @@ def write_results_csv(results, csv_path):
                 "r2": yield_all.get("r2"),
                 "corn_rmse": corn.get("rmse"),
                 "corn_mape_pct": corn.get("mape_pct"),
+                "soybean_rmse": soybean.get("rmse"),
+                "soybean_mape_pct": soybean.get("mape_pct"),
+                "macro_state_rmse_bu_ac": spatial.get("macro_state_rmse_bu_ac"),
+                "macro_county_rmse_bu_ac": spatial.get("macro_county_rmse_bu_ac"),
+                "macro_county_rmse_n3_bu_ac": spatial.get("macro_county_rmse_n3_bu_ac"),
+                "county_reliable_group_count": spatial.get("county_reliable_group_count"),
+                "state_bias_std_bu_ac": spatial.get("state_bias_std_bu_ac"),
+                "state_bias_range_bu_ac": spatial.get("state_bias_range_bu_ac"),
+                "county_bias_std_n3_bu_ac": spatial.get("county_bias_std_n3_bu_ac"),
+                "delta_rmse_bu_acre": delta.get("rmse_bu_acre"),
+                "delta_nrmse_pct": delta.get("nrmse_pct"),
+                "delta_r2": delta.get("r2"),
+                "delta_macro_state_rmse_bu_ac": delta.get("macro_state_rmse_bu_ac"),
+                "delta_macro_county_rmse_bu_ac": delta.get("macro_county_rmse_bu_ac"),
+                "delta_macro_county_rmse_n3_bu_ac": delta.get("macro_county_rmse_n3_bu_ac"),
+                "delta_state_bias_std_bu_ac": delta.get("state_bias_std_bu_ac"),
+                "delta_county_bias_std_n3_bu_ac": delta.get("county_bias_std_n3_bu_ac"),
+                "delta_state_bias_range_bu_ac": delta.get("state_bias_range_bu_ac"),
+                "worst_state": worst_state.get("state"),
+                "worst_state_bias_bu_ac": worst_state.get("bias_bu_ac"),
+                "worst_state_rmse_bu_ac": worst_state.get("rmse_bu_ac"),
                 "time_sec": result.get("time_sec"),
             }
             for name in [
@@ -355,8 +512,9 @@ def write_results_csv(results, csv_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--variant", type=str, default=None, choices=list(VARIANTS.keys()))
-    parser.add_argument("--data", type=str, default=MERGED_DATA_PATH)
+    parser.add_argument("--data", type=str, default=MULTICROP_DATA_PATH)
     parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--all", action="store_true", help="Run every registered variant instead of the compact paper set.")
     args = parser.parse_args()
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -377,6 +535,7 @@ if __name__ == "__main__":
     else:
         log_path = os.path.join(RESULTS_DIR, "ablation.log")
         with tee_stdout(log_path):
-            run_all(args.data, args.epochs)
+            variants = list(VARIANTS.keys()) if args.all else DEFAULT_VARIANTS
+            run_all(args.data, args.epochs, variants)
             print(f"  Text log saved to {log_path}")
 

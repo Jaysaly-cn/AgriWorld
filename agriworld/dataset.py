@@ -25,11 +25,12 @@ import torch
 from torch.utils.data import Dataset
 from agriworld.units import (
     BACKGROUND_MINERAL_N_FRACTION,
-    CORN_BU_AC_TO_T_HA,
+    bu_ac_to_t_ha_factor,
     FERTILIZER_AVAILABILITY,
     TOPSOIL_DEPTH_M,
 )
 from agriworld.data_quality import forcing_quality_issue
+import agriworld.config as config
 
 
 # stress_forcing 鍒楃储寮?鈫?鎻愬彇椤哄簭
@@ -52,6 +53,13 @@ DEFAULT_PLANTING_DOY = {
 
 STATE_EMBED_BUCKETS = 32
 COUNTY_EMBED_BUCKETS = 4096
+
+
+def _allowed_crops():
+    spec = str(getattr(config, "ALLOWED_CROPS", "1")).strip()
+    if spec.lower() in {"all", "*"}:
+        return None
+    return {int(item.strip()) for item in spec.split(",") if item.strip()}
 
 
 def _stable_bucket(value, buckets):
@@ -155,9 +163,10 @@ class AgriTensorDataset(Dataset):
                 obs_lai = obs_lai[:365]
             mask_lai = np.where((obs_lai > 0.5) & (obs_lai <= 12.0), 1.0, 0.0)
 
-            # 璐ㄦ帶 + 鐩爣浣滅墿杩囨护 (浠呯帀绫?crop_type=1)
-            if static_f[10] != 1:
-                self.qc_dropped["non_corn"] += 1
+            crop_code = int(round(float(static_f[10]))) if static_f.size > 10 else 1
+            allowed = _allowed_crops()
+            if allowed is not None and crop_code not in allowed:
+                self.qc_dropped["disallowed_crop"] += 1
                 continue
             if np.sum(mask_lai) < 10 or d["target_yield"] <= 1.0:
                 reason = "insufficient_lai" if np.sum(mask_lai) < 10 else "invalid_yield"
@@ -185,7 +194,7 @@ class AgriTensorDataset(Dataset):
                 "mask_lai":        torch.tensor(mask_lai, dtype=torch.float32),
                 # Internal yield unit is metric tonnes of grain per hectare.
                 "target_yield":    torch.tensor(
-                    [d["target_yield"] * CORN_BU_AC_TO_T_HA],
+                    [d["target_yield"] * bu_ac_to_t_ha_factor(crop_code)],
                     dtype=torch.float32,
                 ),
                 "val_smap_surface":  torch.tensor(smap_surface, dtype=torch.float32),
@@ -195,6 +204,10 @@ class AgriTensorDataset(Dataset):
                 "gdd_final":       float(forcing[-1, 6]),
                 "sample_id":       str(sample_id),
                 "state":           state,
+                "crop_code":       torch.tensor([crop_code], dtype=torch.long),
+                "crop":            {1: "Corn", 5: "Soybean"}.get(
+                    crop_code, f"Crop({crop_code})"
+                ),
                 "county":          (
                     f"{meta.get('state', '')}:{meta.get('county', sample_id)}"
                 ),

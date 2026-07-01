@@ -50,9 +50,14 @@ def _print_split_summary(name, subset):
     targets = torch.tensor([sample["target_yield"].item() for sample in samples])
     final_gdd = torch.tensor([sample["gdd_final"] for sample in samples])
     years = sorted({int(sample["year"]) for sample in samples})
+    crops = {}
+    for sample in samples:
+        crop = sample.get("crop", "unknown")
+        crops[crop] = crops.get(crop, 0) + 1
     low_gdd = int((final_gdd < 500.0).sum().item())
     print(
         f"{name}: n={len(samples)} | years={years} | "
+        f"crops={crops} | "
         f"yield={targets.mean():.2f} [{targets.min():.2f}, {targets.max():.2f}] t/ha | "
         f"GDD={final_gdd.mean():.0f} [{final_gdd.min():.0f}, {final_gdd.max():.0f}] | "
         f"GDD<500: {low_gdd}"
@@ -290,6 +295,7 @@ def train():
             static_f = batch["static_features"].to(
                 C.DEVICE, non_blocking=non_blocking
             )
+            crop_b = static_f[:, 10].round().long()
             year_b   = batch.get("year", None)
             if year_b is not None:
                 year_b = year_b.to(
@@ -314,12 +320,14 @@ def train():
                 pred_yield,
                 tgt_yield,
                 county_id=county_b,
+                crop_id=crop_b if getattr(C, "USE_CROP_AWARE_SPATIAL_LOSS", True) else None,
                 min_gap=getattr(C, "SPATIAL_CONTRAST_MIN_GAP", 0.15),
             ) if getattr(C, "USE_SPATIAL_CONTRAST", True) else pred_yield.new_tensor(0.0)
             spatial_bias = compute_group_bias_loss(
                 pred_yield,
                 tgt_yield,
                 group_id=state_b,
+                crop_id=crop_b if getattr(C, "USE_CROP_AWARE_SPATIAL_LOSS", True) else None,
                 min_count=getattr(C, "SPATIAL_GROUP_BIAS_MIN_COUNT", 4),
             ) if getattr(C, "USE_SPATIAL_GROUP_BIAS", True) else pred_yield.new_tensor(0.0)
             state_reg = compute_state_constraint_loss(model, traj)
@@ -458,6 +466,7 @@ def train():
                     static_f = batch["static_features"].to(
                         C.DEVICE, non_blocking=non_blocking
                     )
+                    crop_vb = static_f[:, 10].round().long()
                     year_vb = batch.get("year", None)
                     if year_vb is not None:
                         year_vb = year_vb.to(
@@ -493,12 +502,14 @@ def train():
                         pred_yield,
                         tgt_yield,
                         county_id=county_vb,
+                        crop_id=crop_vb if getattr(C, "USE_CROP_AWARE_SPATIAL_LOSS", True) else None,
                         min_gap=getattr(C, "SPATIAL_CONTRAST_MIN_GAP", 0.15),
                     ) if getattr(C, "USE_SPATIAL_CONTRAST", True) else pred_yield.new_tensor(0.0)
                     spatial_bias_l = compute_group_bias_loss(
                         pred_yield,
                         tgt_yield,
                         group_id=state_vb,
+                        crop_id=crop_vb if getattr(C, "USE_CROP_AWARE_SPATIAL_LOSS", True) else None,
                         min_count=getattr(C, "SPATIAL_GROUP_BIAS_MIN_COUNT", 4),
                     ) if getattr(C, "USE_SPATIAL_GROUP_BIAS", True) else pred_yield.new_tensor(0.0)
                     state_l = compute_state_constraint_loss(model, traj)
@@ -543,6 +554,10 @@ def train():
         hi = model.harvest_index.item()
         ys = model.yield_scale.item()
         yt = model.yield_year_slope.item()
+        crop_log_ids = torch.tensor([1, 5], device=C.DEVICE)
+        crop_hi = model.crop_harvest_index(crop_log_ids)
+        crop_ys = model.crop_yield_scale(crop_log_ids)
+        crop_yt = model.crop_yield_year_slope(crop_log_ids)
         rue = torch.abs(model.ode_func.rad_expert.rue).item()
         k_ext = torch.abs(model.ode_func.rad_expert.k_ext).item()
         D0 = torch.abs(model.ode_func.stom_expert.D0).item()
@@ -567,8 +582,14 @@ def train():
             "window_stress_loss": s_window_stress / nb,
             "anom_loss": s_anom / nb,
             "HI": hi,
+            "HI_corn": crop_hi[0].item(),
+            "HI_soybean": crop_hi[1].item(),
             "yield_scale": ys,
+            "yield_scale_corn": crop_ys[0].item(),
+            "yield_scale_soybean": crop_ys[1].item(),
             "yield_year_trend": yt,
+            "yield_year_trend_corn": crop_yt[0].item(),
+            "yield_year_trend_soybean": crop_yt[1].item(),
             "RUE": rue,
             "k_ext": k_ext,
             "D0": D0,
@@ -593,7 +614,11 @@ def train():
                 f"| SB: {s_spatial_bias/nb:.4f} "
                 f"| Win: {s_window_stress/nb:.4f} "
                 f"| Anom: {s_anom/nb:.6f} | HI: {hi:.3f} "
-                f"| YS: {ys:.3f} | YT: {yt:.3f} "
+                f"({crop_hi[0].item():.3f}/{crop_hi[1].item():.3f}) "
+                f"| YS: {ys:.3f} "
+                f"({crop_ys[0].item():.3f}/{crop_ys[1].item():.3f}) "
+                f"| YT: {yt:.3f} "
+                f"({crop_yt[0].item():.3f}/{crop_yt[1].item():.3f}) "
                 f"| RUE: {rue:.2f} | k: {k_ext:.3f} | D0: {D0:.2f} "
                 f"| GDDfl: {gdd_fl:.0f} | GDDma: {gdd_ma:.0f} "
                 f"| FC: {fc_mean:.3f} | WP: {wp_mean:.3f} "

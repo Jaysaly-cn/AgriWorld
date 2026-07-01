@@ -19,6 +19,9 @@ CACHE_ROOT = os.path.abspath(os.getenv(
 MERGED_DATA_PATH = os.path.join(
     DATA_ROOT, "national_ode_tensors_v2_merged.pkl"
 )
+MULTICROP_DATA_PATH = os.path.join(
+    DATA_ROOT, "national_ode_tensors_v3_multicrop.pkl"
+)
 PRETRAINED_DIR = os.path.join(PROJECT_ROOT, "pretrained")
 SAVE_DIR = os.path.join(PROJECT_ROOT, "saved_models")
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")

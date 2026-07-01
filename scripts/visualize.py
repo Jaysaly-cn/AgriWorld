@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 import agriworld.config as C
 from agriworld.dataset import AgriTensorDataset
 from agriworld.simulator import AgriWorldSimulator
-from agriworld.units import CORN_T_HA_TO_BU_AC
+from agriworld.units import t_ha_to_bu_ac_factor
 from agriworld.paths import RESULTS_DIR, SAVE_DIR
 
 
@@ -45,10 +45,12 @@ def main():
     # 鈹€鈹€ 鍔犺浇鏁版嵁 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     ds = AgriTensorDataset(C.DATA_PATH)
     sample = ds[0]
+    crop_code = int(sample['static_features'][10].item())
+    bu_factor = t_ha_to_bu_ac_factor(crop_code)
     static_f = sample['static_features'].unsqueeze(0).to(device)
     forcing  = sample['forcing'].unsqueeze(0).to(device)
     n_init   = sample['n_init'].unsqueeze(0).to(device)
-    tgt = sample['target_yield'].item() * CORN_T_HA_TO_BU_AC
+    tgt = sample['target_yield'].item() * bu_factor
     year = torch.tensor([sample['year']], device=device)
     state_id = sample.get("state_id", None)
     county_id = sample.get("county_id", None)
@@ -61,7 +63,7 @@ def main():
     with torch.no_grad():
         model.set_static_features(static_f, state_id=state_id, county_id=county_id)
         traj, pred = model(forcing, n_init, year=year)
-    pred_yield = pred.item() * CORN_T_HA_TO_BU_AC
+    pred_yield = pred.item() * bu_factor
     traj = traj.cpu()
 
     # 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
